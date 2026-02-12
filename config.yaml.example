@@ -1,8 +1,9 @@
-# SkyWatch Configuration
+# SkyWatch Configuration Example
+# Copy this file to config.yaml and adjust for your setup
 
 # Camera Settings
 camera:
-  rtsp_url: "rtsp://admin:osprey%401234@192.168.1.205:10554/tcp/av0_0"
+  rtsp_url: "rtsp://username:password@camera-ip:port/stream"  # Your camera RTSP URL
   reconnect_interval: 5  # seconds
   frame_width: 1920
   frame_height: 1080
