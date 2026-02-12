@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SkyWatch - Smart Camera Capture System</title>
+    <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🌤️ SkyWatch</h1>
+            <p class="subtitle">Smart Camera Capture System</p>
+        </header>
+
+        <nav class="tabs">
+            <button class="tab active" data-tab="live">Live View</button>
+            <button class="tab" data-tab="timelapse">Timelapse</button>
+            <button class="tab" data-tab="solargraph">Solargraph</button>
+            <button class="tab" data-tab="lunar">Lunar</button>
+            <button class="tab" data-tab="motion">Motion</button>
+            <button class="tab" data-tab="status">Status</button>
+        </nav>
+
+        <main>
+            <!-- Live View Tab -->
+            <div id="live" class="tab-content active">
+                <div class="video-container">
+                    <img id="live-stream" src="/api/stream" alt="Live Camera Feed">
+                </div>
+                <div class="controls">
+                    <button id="snapshot-btn">📸 Take Snapshot</button>
+                </div>
+            </div>
+
+            <!-- Timelapse Tab -->
+            <div id="timelapse" class="tab-content">
+                <div class="controls">
+                    <label>Date:</label>
+                    <select id="timelapse-date">
+                        <option value="">Loading...</option>
+                    </select>
+                    <label>Playback Speed:</label>
+                    <select id="playback-speed">
+                        <option value="1">1x</option>
+                        <option value="2">2x</option>
+                        <option value="5">5x</option>
+                        <option value="10">10x</option>
+                        <option value="24" selected>24x</option>
+                        <option value="30">30x</option>
+                        <option value="60">60x</option>
+                    </select>
+                    <button id="play-timelapse">▶ Play</button>
+                    <button id="stop-timelapse">⏹ Stop</button>
+                </div>
+                <div class="video-container">
+                    <img id="timelapse-player" src="" alt="Timelapse Player">
+                    <div class="placeholder" id="timelapse-placeholder">
+                        Select a date and click Play to view timelapse
+                    </div>
+                </div>
+                <div class="info">
+                    <p id="timelapse-info">Frame count: -</p>
+                </div>
+            </div>
+
+            <!-- Solargraph Tab -->
+            <div id="solargraph" class="tab-content">
+                <div class="composite-container">
+                    <img id="solargraph-composite" src="/api/solargraph/composite" alt="Solargraph Composite">
+                    <div class="placeholder" id="solargraph-placeholder">
+                        Solargraph composite will appear here once sun is detected
+                    </div>
+                </div>
+                <div class="controls">
+                    <button id="refresh-solargraph">🔄 Refresh</button>
+                </div>
+                <div class="info">
+                    <p>The solargraph shows the sun's path across the sky. Each bright spot represents a captured sun position.</p>
+                </div>
+            </div>
+
+            <!-- Lunar Tab -->
+            <div id="lunar" class="tab-content">
+                <div class="composite-container">
+                    <img id="lunar-composite" src="/api/lunar/composite" alt="Lunar Composite">
+                    <div class="placeholder" id="lunar-placeholder">
+                        Lunar composite will appear here once moon is detected
+                    </div>
+                </div>
+                <div class="controls">
+                    <button id="refresh-lunar">🔄 Refresh</button>
+                </div>
+                <div class="info">
+                    <p>The lunar composite shows the moon's path across the night sky.</p>
+                </div>
+            </div>
+
+            <!-- Motion Tab -->
+            <div id="motion" class="tab-content">
+                <div class="controls">
+                    <button id="refresh-motion">🔄 Refresh Events</button>
+                </div>
+                <div id="motion-events" class="motion-grid">
+                    <p class="placeholder">Loading motion events...</p>
+                </div>
+            </div>
+
+            <!-- Status Tab -->
+            <div id="status" class="tab-content">
+                <div class="controls">
+                    <button id="refresh-status">🔄 Refresh</button>
+                </div>
+                <div id="status-info" class="status-grid">
+                    <p class="placeholder">Loading status...</p>
+                </div>
+            </div>
+        </main>
+
+        <footer>
+            <p>SkyWatch v1.0 | <a href="https://github.com/srikanth8286/skywatch" target="_blank">GitHub</a></p>
+        </footer>
+    </div>
+
+    <script src="/script.js"></script>
+</body>
+</html>

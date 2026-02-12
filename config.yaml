@@ -1,0 +1,64 @@
+# SkyWatch Configuration
+
+# Camera Settings
+camera:
+  rtsp_url: "rtsp://admin:osprey%401234@192.168.1.205:10554/tcp/av0_0"
+  reconnect_interval: 5  # seconds
+  frame_width: 1920
+  frame_height: 1080
+
+# Storage Settings
+storage:
+  base_path: "/storage"  # Local or NAS mount point
+  # For NAS, mount before starting: sudo mount -t cifs //nas-ip/share /storage -o username=user,password=pass
+  nas_enabled: false
+  nas_path: ""  # e.g., //192.168.1.100/skywatch or nfs://192.168.1.100:/export/skywatch
+
+# Timelapse Settings
+timelapse:
+  enabled: true
+  interval: 60  # seconds (1 frame per minute)
+  quality: 90  # JPEG quality 1-100
+  daily_video: true  # Compile daily video at midnight
+  video_fps: 24
+
+# Solargraph Settings
+solargraph:
+  enabled: true
+  detection_interval: 30  # seconds between detection attempts
+  brightness_threshold: 200  # 0-255, minimum brightness to detect sun
+  min_radius: 10  # minimum circle radius in pixels
+  max_radius: 100  # maximum circle radius
+  daytime_only: true  # Only run during daylight hours
+  latitude: 0.0  # Set your latitude for sunrise/sunset calculation
+  longitude: 0.0  # Set your longitude
+
+# Lunar Tracking Settings
+lunar:
+  enabled: true
+  detection_interval: 60  # seconds
+  brightness_threshold: 150
+  min_radius: 15
+  max_radius: 150
+  nighttime_only: true
+
+# Motion Detection Settings
+motion:
+  enabled: true
+  sensitivity: 25  # 0-100, lower = more sensitive
+  min_area: 500  # minimum contour area in pixels
+  burst_count: 10  # number of frames to capture when motion detected
+  burst_fps: 10  # frames per second during burst
+  cooldown: 5  # seconds before next detection
+
+# Web Server Settings
+server:
+  host: "0.0.0.0"
+  port: 8080
+  cors_origins: ["*"]
+
+# Advanced Settings
+advanced:
+  max_frame_queue: 30
+  jpeg_quality_live: 85
+  log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR

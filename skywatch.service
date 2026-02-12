@@ -1,0 +1,14 @@
+[Unit]
+Description=SkyWatch Smart Camera Capture System
+After=network.target
+
+[Service]
+Type=simple
+User=YOUR_USERNAME
+WorkingDirectory=/path/to/skywatch
+ExecStart=/path/to/skywatch/venv/bin/python /path/to/skywatch/main.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

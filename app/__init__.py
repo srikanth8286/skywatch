@@ -1,0 +1,3 @@
+"""
+SkyWatch app package
+"""

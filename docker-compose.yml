@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  skywatch:
+    build: .
+    container_name: skywatch
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./config.yaml:/app/config.yaml
+      - ./storage:/storage
+      # If using NAS, mount it here:
+      # - /mnt/nas/skywatch:/storage
+    environment:
+      - TZ=America/New_York  # Set your timezone
+    restart: unless-stopped
+    network_mode: bridge
