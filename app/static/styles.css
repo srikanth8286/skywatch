@@ -303,7 +303,7 @@ footer a:hover {
 /* Responsive */
 @media (max-width: 768px) {
     body {
-        padding: 10px;
+        padding: 5px;
     }
     
     .container {
@@ -319,22 +319,29 @@ footer a:hover {
     }
     
     .subtitle {
-        font-size: 1em;
+        font-size: 0.95em;
     }
     
     .tabs {
-        flex-direction: row;
-        flex-wrap: nowrap;
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
+        padding: 0;
+        gap: 0;
     }
     
     .tab {
         flex: 0 0 auto;
-        min-width: 80px;
-        padding: 12px 10px;
-        font-size: 0.85em;
-        white-space: nowrap;
+        min-width: 90px;
+        padding: 14px 12px;
+        font-size: 0.9em;
+        border-right: 1px solid #e0e0e0;
+    }
+    
+    .tab:last-child {
+        border-right: none;
+    }
+    
+    .tab.active {
+        border-bottom: 4px solid #667eea;
+        padding-bottom: 10px;
     }
     
     main {

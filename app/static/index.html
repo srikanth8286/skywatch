@@ -27,7 +27,8 @@
             <!-- Live View Tab -->
             <div id="live" class="tab-content active">
                 <div class="video-container">
-                    <img id="live-stream" src="/api/stream" alt="Live Camera Feed">
+                    <div class="placeholder" id="live-placeholder">Loading live stream...</div>
+                    <img id="live-stream" src="/api/stream" alt="Live Camera Feed" style="display:none;">
                 </div>
                 <div class="controls">
                     <button id="snapshot-btn">📸 Take Snapshot</button>

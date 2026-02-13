@@ -1,5 +1,50 @@
 // SkyWatch Frontend JavaScript
 
+// Initialize on page load
+document.addEventListener('DOMContentLoaded', () => {
+    initializeLiveView();
+    preloadData();
+});
+
+// Initialize live stream with loading handling
+function initializeLiveView() {
+    const liveStream = document.getElementById('live-stream');
+    const placeholder = document.getElementById('live-placeholder');
+    
+    liveStream.onload = () => {
+        placeholder.style.display = 'none';
+        liveStream.style.display = 'block';
+    };
+    
+    liveStream.onerror = () => {
+        placeholder.textContent = 'Camera stream unavailable';
+        placeholder.style.color = '#dc3545';
+    };
+    
+    // Add timestamp to prevent caching issues
+    const streamUrl = '/api/stream?t=' + Date.now();
+    liveStream.src = streamUrl;
+}
+
+// Preload data in background
+async function preloadData() {
+    // Preload timelapse dates
+    try {
+        const response = await fetch('/api/timelapse/dates');
+        const data = await response.json();
+        window.timelapseData = data;
+    } catch (error) {
+        console.error('Error preloading timelapse data:', error);
+    }
+    
+    // Preload status
+    try {
+        await fetch('/api/status');
+    } catch (error) {
+        console.error('Error preloading status:', error);
+    }
+}
+
 // Tab switching
 const tabs = document.querySelectorAll('.tab');
 const tabContents = document.querySelectorAll('.tab-content');
