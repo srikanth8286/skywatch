@@ -97,18 +97,30 @@ class CameraManager:
             # Run in thread pool to avoid blocking
             loop = asyncio.get_event_loop()
             try:
+                # Create VideoCapture with specific options
+                def create_capture():
+                    cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
+                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                    cap.set(cv2.CAP_PROP_FPS, 30)
+                    return cap
+                
                 self.cap = await asyncio.wait_for(
-                    loop.run_in_executor(None, cv2.VideoCapture, self.rtsp_url),
-                    timeout=10.0  # 10 second timeout instead of 30
+                    loop.run_in_executor(None, create_capture),
+                    timeout=15.0  # 15 second timeout
                 )
             except asyncio.TimeoutError:
-                logger.error("Camera connection timed out after 10 seconds")
+                logger.error("Camera connection timed out after 15 seconds - camera may be offline or URL incorrect")
                 self.cap = None
                 return
             
             if self.cap and self.cap.isOpened():
-                self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Minimize latency
                 logger.info("Camera connected successfully")
+                # Test read a frame to verify it's actually working
+                ret, frame = self.cap.read()
+                if ret and frame is not None:
+                    logger.info(f"Camera verified - frame size: {frame.shape}")
+                else:
+                    logger.warning("Camera opened but cannot read frames")
             else:
                 logger.error("Failed to connect to camera - check RTSP URL and camera availability")
                 self.cap = None
