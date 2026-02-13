@@ -252,13 +252,21 @@ class TimelapseService:
         }
         
     def get_available_dates(self) -> list:
-        """Get list of dates with compiled timelapse videos"""
-        dates = []
+        """Get list of dates with compiled timelapse videos or current day"""
+        dates = set()
+        
+        # Add current date (even if video not compiled yet)
+        from datetime import datetime
+        today = datetime.now().strftime('%Y-%m-%d')
+        dates.add(today)
+        
+        # Add dates from existing MP4 files
         if self.base_path.exists():
             for video_file in sorted(self.base_path.glob("*.mp4"), reverse=True):
                 if video_file.stem != "temp":  # Skip temp files
-                    dates.append(video_file.stem)
-        return dates
+                    dates.add(video_file.stem)
+        
+        return sorted(list(dates), reverse=True)
         
     def get_video_path(self, date: str) -> Path:
         """Get path to compiled video for a specific date"""
