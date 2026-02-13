@@ -165,6 +165,12 @@ class CameraManager:
             self.subscribers.remove(callback)
             logger.debug(f"Subscriber removed. Total subscribers: {len(self.subscribers)}")
             
+    async def update_rtsp_url(self, new_url: str):
+        """Update RTSP URL and reconnect"""
+        logger.info(f"Updating RTSP URL from {self.rtsp_url} to {new_url}")
+        self.rtsp_url = new_url
+        await self._reconnect()
+        
     def get_stats(self) -> dict:
         """Get camera statistics"""
         is_connected = self.cap is not None and self.cap.isOpened()

@@ -1,5 +1,5 @@
 camera:
-  rtsp_url: rtsp://admin:osprey%401234@192.168.1.205:10554/tcp/av0_0
+  rtsp_url: rtsp://osprey%401234@192.168.1.205:10554/tcp/av0_0
   reconnect_interval: 5
   frame_width: 1920
   frame_height: 1080
@@ -15,7 +15,7 @@ timelapse:
   daily_video: true
   video_fps: 24
 solargraph:
-  enabled: true
+  enabled: false
   detection_interval: 30
   brightness_threshold: 200
   min_radius: 10
@@ -24,14 +24,14 @@ solargraph:
   latitude: 0
   longitude: 0
 lunar:
-  enabled: true
+  enabled: false
   detection_interval: 60
   brightness_threshold: 150
   min_radius: 15
   max_radius: 150
   nighttime_only: true
 motion:
-  enabled: true
+  enabled: false
   sensitivity: 25
   min_area: 500
   burst_count: 10

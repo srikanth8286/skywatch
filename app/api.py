@@ -337,7 +337,7 @@ async def get_settings():
 
 @router.put("/settings")
 async def update_settings(settings: Dict[str, Any], request: Request):
-    """Update settings (requires restart to apply)"""
+    """Update settings and apply camera changes immediately"""
     from app.settings import save_settings, validate_settings
     
     # Validate settings
@@ -350,10 +350,16 @@ async def update_settings(settings: Dict[str, Any], request: Request):
     if not success:
         raise HTTPException(status_code=500, detail="Failed to save settings")
     
+    # Apply camera URL changes immediately
+    if 'camera' in settings and 'rtsp_url' in settings['camera']:
+        camera_manager = request.app.state.camera_manager
+        new_url = settings['camera']['rtsp_url']
+        await camera_manager.update_rtsp_url(new_url)
+        
     return {
         "success": True,
-        "message": "Settings saved successfully. Restart SkyWatch to apply changes.",
-        "restart_required": True
+        "message": "Settings saved. Camera reconnecting with new settings.",
+        "restart_required": False
     }
 
 
