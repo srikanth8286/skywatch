@@ -56,7 +56,9 @@ class CameraManager:
                     consecutive_failures = 0
                 
                 if self.cap and self.cap.isOpened():
-                    ret, frame = self.cap.read()
+                    # Run blocking read in executor to avoid blocking event loop
+                    loop = asyncio.get_event_loop()
+                    ret, frame = await loop.run_in_executor(None, self.cap.read)
                     
                     if ret and frame is not None:
                         with self.frame_lock:
@@ -128,7 +130,8 @@ class CameraManager:
             if self.cap and self.cap.isOpened():
                 logger.info("Camera connected successfully")
                 # Test read a frame to verify it's actually working
-                ret, frame = self.cap.read()
+                loop = asyncio.get_event_loop()
+                ret, frame = await loop.run_in_executor(None, self.cap.read)
                 if ret and frame is not None:
                     logger.info(f"Camera verified - frame size: {frame.shape}")
                 else:

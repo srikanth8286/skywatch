@@ -316,12 +316,16 @@ async def get_storage_file(path: str):
 async def get_settings():
     """Get current settings"""
     from app.settings import load_settings
+    import copy
     try:
         settings = load_settings()
+        # Create a deep copy to avoid modifying the original
+        settings_copy = copy.deepcopy(settings)
+        
         # Remove sensitive data from response
-        if 'camera' in settings and 'rtsp_url' in settings['camera']:
+        if 'camera' in settings_copy and 'rtsp_url' in settings_copy['camera']:
             # Mask password in RTSP URL
-            url = settings['camera']['rtsp_url']
+            url = settings_copy['camera']['rtsp_url']
             if '@' in url and '://' in url:
                 protocol = url.split('://')[0]
                 rest = url.split('://')[1]
@@ -329,8 +333,8 @@ async def get_settings():
                     creds, location = rest.split('@', 1)
                     if ':' in creds:
                         user = creds.split(':')[0]
-                        settings['camera']['rtsp_url'] = f"{protocol}://{user}:****@{location}"
-        return settings
+                        settings_copy['camera']['rtsp_url'] = f"{protocol}://{user}:****@{location}"
+        return settings_copy
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -339,6 +343,11 @@ async def get_settings():
 async def update_settings(settings: Dict[str, Any], request: Request):
     """Update settings and apply camera changes immediately"""
     from app.settings import save_settings, validate_settings
+    
+    # Check if password was corrupted (contains ****)
+    if 'camera' in settings and 'rtsp_url' in settings['camera']:
+        if '****' in settings['camera']['rtsp_url']:
+            raise HTTPException(status_code=400, detail="Cannot save settings with masked password. Please re-enter the full RTSP URL.")
     
     # Validate settings
     valid, message = validate_settings(settings)
