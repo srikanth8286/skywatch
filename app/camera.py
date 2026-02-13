@@ -90,16 +90,27 @@ class CameraManager:
                     await asyncio.sleep(0.1)
                 
     async def _connect(self):
-        """Connect to RTSP stream"""
+        """Connect to RTSP stream with timeout"""
         try:
             logger.info(f"Connecting to camera: {self.rtsp_url}")
-            self.cap = cv2.VideoCapture(self.rtsp_url)
-            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Minimize latency
             
-            if self.cap.isOpened():
+            # Run in thread pool to avoid blocking
+            loop = asyncio.get_event_loop()
+            try:
+                self.cap = await asyncio.wait_for(
+                    loop.run_in_executor(None, cv2.VideoCapture, self.rtsp_url),
+                    timeout=10.0  # 10 second timeout instead of 30
+                )
+            except asyncio.TimeoutError:
+                logger.error("Camera connection timed out after 10 seconds")
+                self.cap = None
+                return
+            
+            if self.cap and self.cap.isOpened():
+                self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Minimize latency
                 logger.info("Camera connected successfully")
             else:
-                logger.error("Failed to connect to camera")
+                logger.error("Failed to connect to camera - check RTSP URL and camera availability")
                 self.cap = None
         except Exception as e:
             logger.error(f"Exception during camera connection: {e}", exc_info=True)
@@ -132,8 +143,10 @@ class CameraManager:
             
     def get_stats(self) -> dict:
         """Get camera statistics"""
+        is_connected = self.cap is not None and self.cap.isOpened()
         return {
-            "is_connected": self.cap is not None and self.cap.isOpened(),
+            "is_connected": is_connected,
+            "status_message": "Connected and streaming" if is_connected else "Camera unavailable - check connection and RTSP URL",
             "frame_count": self.frame_count,
             "last_frame_time": self.last_frame_time.isoformat() if self.last_frame_time else None,
             "subscribers": len(self.subscribers)

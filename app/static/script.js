@@ -292,13 +292,17 @@ async function loadStatus() {
         
         const container = document.getElementById('status-info');
         
-        // Camera status
+        // Camera status with warning if disconnected
+        const cameraStatus = data.camera.is_connected ? '✅ Connected' : '⚠️ Disconnected';
+        const showWarning = !data.camera.is_connected;
+        
         const cameraCard = createStatusCard('Camera', {
-            'Status': data.camera.is_connected ? '✅ Connected' : '❌ Disconnected',
+            'Status': cameraStatus,
+            'Message': data.camera.status_message || 'N/A',
             'Frame Count': data.camera.frame_count.toLocaleString(),
             'Last Frame': data.camera.last_frame_time ? new Date(data.camera.last_frame_time).toLocaleTimeString() : 'N/A',
             'Subscribers': data.camera.subscribers
-        });
+        }, showWarning);
         
         // Service cards
         const serviceCards = Object.entries(data.services).map(([name, stats]) => {
@@ -330,7 +334,8 @@ async function loadStatus() {
     }
 }
 
-function createStatusCard(title, data) {
+function createStatusCard(title, data, highlightWarning = false) {
+    const cardClass = highlightWarning ? 'status-card status-warning-card' : 'status-card';
     const stats = Object.entries(data).map(([label, value]) => `
         <div class="stat">
             <span class="stat-label">${label}:</span>
@@ -339,7 +344,7 @@ function createStatusCard(title, data) {
     `).join('');
     
     return `
-        <div class="status-card">
+        <div class="${cardClass}">
             <h3>${title}</h3>
             ${stats}
         </div>
