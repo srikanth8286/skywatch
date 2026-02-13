@@ -9,8 +9,12 @@ from pathlib import Path
 from datetime import datetime, time
 from astral import LocationInfo
 from astral.sun import sun
+from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger(__name__)
+
+# Thread pool for CPU-heavy CV operations
+_cv_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="solar-cv")
 
 
 class SolargraphService:
@@ -115,26 +119,40 @@ class SolargraphService:
         frame = self.camera.get_frame()
         if frame is None:
             return
-            
-        # Convert to grayscale
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         
-        # Apply Gaussian blur to reduce noise
-        blurred = cv2.GaussianBlur(gray, (9, 9), 2)
-        
-        # Find circles (potential sun) with stricter parameters
-        circles = cv2.HoughCircles(
-            blurred,
-            cv2.HOUGH_GRADIENT,
-            dp=1,
-            minDist=200,  # Increased - sun should be alone in the sky
-            param1=100,    # Increased - stricter edge detection
-            param2=50,     # Increased - stricter circle detection
-            minRadius=self.settings.solargraph.min_radius,
-            maxRadius=self.settings.solargraph.max_radius
+        # Run heavy CV operations off the event loop
+        loop = asyncio.get_running_loop()
+        best_circle = await loop.run_in_executor(
+            _cv_executor, self._find_sun_sync, frame
         )
         
-        if circles is not None and len(circles[0]) > 0:
+        if best_circle:
+            await self._capture_sun(frame, best_circle)
+    
+    def _find_sun_sync(self, frame):
+        """Find sun in frame using HoughCircles (runs in thread pool)"""
+        try:
+            # Convert to grayscale
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            
+            # Apply Gaussian blur to reduce noise
+            blurred = cv2.GaussianBlur(gray, (9, 9), 2)
+            
+            # Find circles (potential sun) with stricter parameters
+            circles = cv2.HoughCircles(
+                blurred,
+                cv2.HOUGH_GRADIENT,
+                dp=1,
+                minDist=200,
+                param1=100,
+                param2=50,
+                minRadius=self.settings.solargraph.min_radius,
+                maxRadius=self.settings.solargraph.max_radius
+            )
+            
+            if circles is None or len(circles[0]) == 0:
+                return None
+            
             # Take the brightest circle that meets sun criteria
             circles = np.uint16(np.around(circles))
             best_circle = None
@@ -143,25 +161,23 @@ class SolargraphService:
             for circle in circles[0]:
                 x, y, r = circle
                 
-                # Validate this could be the sun
                 if not self._validate_sun_candidate(gray, x, y, r):
                     continue
                 
-                # Calculate mask for this circle
                 mask = np.zeros_like(gray)
                 cv2.circle(mask, (x, y), r, 255, -1)
                 mean_brightness = cv2.mean(gray, mask=mask)[0]
                 
-                # Score based on brightness and size
-                # Sun should be very bright and reasonably sized
                 score = mean_brightness * (r / self.settings.solargraph.max_radius)
                 
                 if score > max_score and mean_brightness > self.settings.solargraph.brightness_threshold:
                     max_score = score
-                    best_circle = (x, y, r)
-                    
-            if best_circle:
-                await self._capture_sun(frame, best_circle)
+                    best_circle = (int(x), int(y), int(r))
+            
+            return best_circle
+        except Exception as e:
+            logger.error(f"Error in sun detection: {e}")
+            return None
     
     def _validate_sun_candidate(self, gray, x, y, r) -> bool:
         """Validate if a circle could be the sun"""
@@ -211,15 +227,16 @@ class SolargraphService:
         """Capture sun and update composite"""
         x, y, r = circle_info
         
-        # Save raw capture
+        # Save raw capture in executor
         now = datetime.now()
         filename = now.strftime("%Y-%m-%d_%H-%M-%S.jpg")
         filepath = self.raw_path / filename
         
-        # Draw circle on frame for debugging
         debug_frame = frame.copy()
         cv2.circle(debug_frame, (x, y), r, (0, 255, 0), 2)
-        cv2.imwrite(str(filepath), debug_frame)
+        
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(_cv_executor, cv2.imwrite, str(filepath), debug_frame)
         
         self.detection_count += 1
         logger.info(f"Sun detected and captured: {filename} at ({x}, {y}) radius {r}")
@@ -244,8 +261,9 @@ class SolargraphService:
         # Use maximum pixel values to accumulate sun trails
         self.composite_image = np.maximum(self.composite_image, sun_region)
         
-        # Save composite
-        cv2.imwrite(str(self.composite_path), self.composite_image)
+        # Save composite in executor
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(_cv_executor, cv2.imwrite, str(self.composite_path), self.composite_image)
         logger.debug("Composite image updated")
         
     def get_stats(self) -> dict:

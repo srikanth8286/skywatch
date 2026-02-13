@@ -10,10 +10,14 @@ import asyncio
 import logging
 from datetime import datetime
 from typing import Dict, Any
+from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Thread pool for JPEG encoding in the stream endpoint
+_encode_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="jpeg-encode")
 
 
 @router.get("/status")
@@ -45,6 +49,7 @@ async def video_stream(request: Request):
     async def generate():
         from app.config import settings
         try:
+            loop = asyncio.get_running_loop()
             while True:
                 # Check if client disconnected
                 if await request.is_disconnected():
@@ -53,10 +58,18 @@ async def video_stream(request: Request):
                 frame = camera.get_frame()
                 if frame is not None:
                     try:
-                        # Encode frame as JPEG
-                        encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), settings.advanced.jpeg_quality_live]
-                        _, buffer = cv2.imencode('.jpg', frame, encode_param)
-                        frame_bytes = buffer.tobytes()
+                        # Encode frame as JPEG in executor to avoid blocking event loop
+                        def encode_frame(f, quality):
+                            param = [int(cv2.IMWRITE_JPEG_QUALITY), quality]
+                            _, buf = cv2.imencode('.jpg', f, param)
+                            return buf.tobytes()
+                        
+                        frame_bytes = await loop.run_in_executor(
+                            _encode_executor,
+                            encode_frame,
+                            frame,
+                            settings.advanced.jpeg_quality_live
+                        )
                         
                         yield (b'--frame\r\n'
                                b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
@@ -65,7 +78,7 @@ async def video_stream(request: Request):
                         await asyncio.sleep(0.1)
                         continue
                 
-                await asyncio.sleep(0.033)  # ~30 FPS
+                await asyncio.sleep(0.066)  # ~15 FPS for live view — matches capture rate
         except asyncio.CancelledError:
             pass
         except Exception as e:
@@ -163,7 +176,6 @@ async def download_timelapse_video(date: str, fps: int = 24, request: Request = 
     """Compile and download timelapse as MP4 video"""
     from app.config import settings
     import tempfile
-    import subprocess
     
     services = request.app.state.services
     
@@ -185,7 +197,7 @@ async def download_timelapse_video(date: str, fps: int = 24, request: Request = 
     video_path = base_path / f"timelapse_{date}.mp4"
     
     if not video_path.exists():
-        # Compile video using ffmpeg
+        # Compile video using ffmpeg (async subprocess to avoid blocking)
         try:
             # Create temporary file list
             with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
@@ -193,7 +205,6 @@ async def download_timelapse_video(date: str, fps: int = 24, request: Request = 
                 for frame_info in frames:
                     frame_path = base_path / frame_info["path"]
                     if frame_path.exists():
-                        # FFmpeg concat requires duration for each file
                         f.write(f"file '{frame_path.absolute()}'\n")
                         f.write(f"duration {1.0/fps}\n")
                 # Duplicate last frame to ensure it shows
@@ -202,7 +213,6 @@ async def download_timelapse_video(date: str, fps: int = 24, request: Request = 
                     if last_frame.exists():
                         f.write(f"file '{last_frame.absolute()}'\n")
             
-            # Compile video with ffmpeg
             cmd = [
                 'ffmpeg', '-y',
                 '-f', 'concat',
@@ -216,16 +226,29 @@ async def download_timelapse_video(date: str, fps: int = 24, request: Request = 
                 str(video_path)
             ]
             
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
             
             # Clean up temp file
-            Path(list_file).unlink()
+            Path(list_file).unlink(missing_ok=True)
             
-            if result.returncode != 0:
-                raise HTTPException(status_code=500, detail=f"Video compilation failed: {result.stderr}")
+            if proc.returncode != 0:
+                raise HTTPException(status_code=500, detail=f"Video compilation failed: {stderr.decode()}")
                 
+        except asyncio.TimeoutError:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            raise HTTPException(status_code=500, detail="Video compilation timed out")
         except FileNotFoundError:
             raise HTTPException(status_code=500, detail="ffmpeg not installed. Please install ffmpeg to compile videos.")
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error compiling video: {str(e)}")
     

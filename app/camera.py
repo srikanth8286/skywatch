@@ -7,8 +7,8 @@ import cv2
 import numpy as np
 from typing import Optional, List, Callable
 from datetime import datetime
-from queue import Queue, Full
 import threading
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -25,133 +25,145 @@ class CameraManager:
         self.frame_lock = threading.Lock()
         self.subscribers: List[Callable] = []
         self.frame_count = 0
-        self.last_frame_time = None
+        self.last_frame_time: Optional[datetime] = None
+        
+        # Dedicated capture thread — keeps OpenCV completely off the event loop
+        self._capture_thread: Optional[threading.Thread] = None
         
     async def start(self):
-        """Start camera capture"""
+        """Start camera capture in a dedicated thread"""
         self.is_running = True
-        asyncio.create_task(self._capture_loop())
+        self._capture_thread = threading.Thread(
+            target=self._capture_thread_main,
+            name="camera-capture",
+            daemon=True,
+        )
+        self._capture_thread.start()
         logger.info(f"Camera manager started for {self.rtsp_url}")
         
     async def stop(self):
         """Stop camera capture"""
         self.is_running = False
+        if self._capture_thread and self._capture_thread.is_alive():
+            self._capture_thread.join(timeout=5.0)
         if self.cap:
-            self.cap.release()
+            try:
+                self.cap.release()
+            except Exception:
+                pass
         logger.info("Camera manager stopped")
-        
-    async def _capture_loop(self):
-        """Main capture loop running in background"""
+    
+    # ── Dedicated capture thread (runs entirely outside asyncio) ──────────
+    
+    def _capture_thread_main(self):
+        """
+        Main capture loop running in its own OS thread.
+        All OpenCV calls happen here — never on the asyncio event loop.
+        """
         consecutive_failures = 0
         max_failures = 10
         
         while self.is_running:
             try:
+                # Connect if needed
                 if not self.cap or not self.cap.isOpened():
-                    await self._connect()
+                    self._connect_sync()
                     if not self.cap or not self.cap.isOpened():
-                        # Connection failed, wait before retry
-                        await asyncio.sleep(self.reconnect_interval)
+                        time.sleep(self.reconnect_interval)
                         continue
                     consecutive_failures = 0
                 
-                if self.cap and self.cap.isOpened():
-                    # Run blocking read in executor to avoid blocking event loop
-                    loop = asyncio.get_event_loop()
-                    ret, frame = await loop.run_in_executor(None, self.cap.read)
-                    
-                    if ret and frame is not None:
-                        with self.frame_lock:
-                            self.current_frame = frame.copy()
-                            self.frame_count += 1
-                            self.last_frame_time = datetime.now()
-                        consecutive_failures = 0
-                        
-                        # Notify subscribers
-                        for subscriber in self.subscribers:
-                            try:
-                                subscriber(frame.copy())
-                            except Exception as e:
-                                logger.error(f"Error in subscriber: {e}", exc_info=True)
-                    else:
-                        consecutive_failures += 1
-                        if consecutive_failures >= max_failures:
-                            logger.warning(f"Failed to read frame {consecutive_failures} times, reconnecting...")
-                            await self._reconnect()
-                            consecutive_failures = 0
+                ret, frame = self.cap.read()
                 
-                await asyncio.sleep(0.033)  # ~30 FPS - reduced CPU usage
-                
-            except Exception as e:
-                logger.error(f"Error in capture loop: {e}", exc_info=True)
-                consecutive_failures += 1
-                if consecutive_failures >= max_failures:
-                    await asyncio.sleep(self.reconnect_interval)
+                if ret and frame is not None:
+                    with self.frame_lock:
+                        self.current_frame = frame  # No copy — we own this reference
+                        self.frame_count += 1
+                        self.last_frame_time = datetime.now()
                     consecutive_failures = 0
                 else:
-                    await asyncio.sleep(0.1)
+                    consecutive_failures += 1
+                    if consecutive_failures >= max_failures:
+                        logger.warning(f"Failed to read frame {consecutive_failures} times, reconnecting...")
+                        self._reconnect_sync()
+                        consecutive_failures = 0
+                    else:
+                        time.sleep(0.05)
+                    continue
                 
-    async def _connect(self):
-        """Connect to RTSP stream with timeout"""
+                # Throttle to ~15 FPS — sufficient for all services, much lower CPU
+                time.sleep(0.066)
+                
+            except Exception as e:
+                logger.error(f"Error in capture thread: {e}", exc_info=True)
+                consecutive_failures += 1
+                if consecutive_failures >= max_failures:
+                    time.sleep(self.reconnect_interval)
+                    consecutive_failures = 0
+                else:
+                    time.sleep(0.5)
+    
+    def _connect_sync(self):
+        """Connect to RTSP stream (called from capture thread only)"""
         try:
             logger.info(f"Connecting to camera: {self.rtsp_url}")
             
-            # Run in thread pool to avoid blocking
-            loop = asyncio.get_event_loop()
-            try:
-                # Create VideoCapture with specific options
-                def create_capture():
-                    # Try with GStreamer pipeline first (better for RTSP)
-                    gst_pipeline = (
-                        f"rtspsrc location={self.rtsp_url} latency=0 ! "
-                        "rtph264depay ! h264parse ! avdec_h264 ! "
-                        "videoconvert ! appsink"
-                    )
-                    cap = cv2.VideoCapture(gst_pipeline, cv2.CAP_GSTREAMER)
-                    
-                    # If GStreamer fails, fall back to default
-                    if not cap.isOpened():
-                        logger.info("GStreamer failed, trying default backend...")
-                        cap = cv2.VideoCapture(self.rtsp_url)
-                    
-                    if cap.isOpened():
-                        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-                    return cap
-                
-                self.cap = await asyncio.wait_for(
-                    loop.run_in_executor(None, create_capture),
-                    timeout=15.0  # 15 second timeout
-                )
-            except asyncio.TimeoutError:
-                logger.error("Camera connection timed out after 15 seconds - camera may be offline or URL incorrect")
-                self.cap = None
-                return
+            # Release any existing capture
+            if self.cap:
+                try:
+                    self.cap.release()
+                except Exception:
+                    pass
             
-            if self.cap and self.cap.isOpened():
-                logger.info("Camera connected successfully")
-                # Test read a frame to verify it's actually working
-                loop = asyncio.get_event_loop()
-                ret, frame = await loop.run_in_executor(None, self.cap.read)
+            # Try GStreamer first, fallback to default
+            gst_pipeline = (
+                f"rtspsrc location={self.rtsp_url} latency=0 ! "
+                "rtph264depay ! h264parse ! avdec_h264 ! "
+                "videoconvert ! appsink"
+            )
+            cap = cv2.VideoCapture(gst_pipeline, cv2.CAP_GSTREAMER)
+            
+            if not cap.isOpened():
+                logger.info("GStreamer failed, trying default backend...")
+                cap = cv2.VideoCapture(self.rtsp_url)
+            
+            if cap.isOpened():
+                # Minimal buffer to avoid stale frames
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                
+                # Verify with a test read
+                ret, frame = cap.read()
                 if ret and frame is not None:
-                    logger.info(f"Camera verified - frame size: {frame.shape}")
+                    logger.info(f"Camera connected - frame size: {frame.shape}")
+                    with self.frame_lock:
+                        self.current_frame = frame
+                        self.frame_count += 1
+                        self.last_frame_time = datetime.now()
+                    self.cap = cap
                 else:
                     logger.warning("Camera opened but cannot read frames")
+                    cap.release()
+                    self.cap = None
             else:
-                logger.error("Failed to connect to camera - check RTSP URL and camera availability")
+                logger.error("Failed to connect to camera - check RTSP URL")
                 self.cap = None
         except Exception as e:
             logger.error(f"Exception during camera connection: {e}", exc_info=True)
             self.cap = None
-            
-    async def _reconnect(self):
-        """Reconnect to camera"""
+    
+    def _reconnect_sync(self):
+        """Reconnect to camera (called from capture thread only)"""
         if self.cap:
-            self.cap.release()
-        await asyncio.sleep(self.reconnect_interval)
-        await self._connect()
+            try:
+                self.cap.release()
+            except Exception:
+                pass
+            self.cap = None
+        time.sleep(self.reconnect_interval)
+        self._connect_sync()
         
     def get_frame(self) -> Optional[np.ndarray]:
-        """Get current frame (thread-safe)"""
+        """Get current frame (thread-safe). Returns a copy."""
         with self.frame_lock:
             if self.current_frame is not None:
                 return self.current_frame.copy()
@@ -170,9 +182,15 @@ class CameraManager:
             
     async def update_rtsp_url(self, new_url: str):
         """Update RTSP URL and reconnect"""
-        logger.info(f"Updating RTSP URL from {self.rtsp_url} to {new_url}")
+        logger.info(f"Updating RTSP URL to {new_url}")
         self.rtsp_url = new_url
-        await self._reconnect()
+        # Release current capture — the thread will auto-reconnect with the new URL
+        if self.cap:
+            try:
+                self.cap.release()
+            except Exception:
+                pass
+            self.cap = None
         
     def get_stats(self) -> dict:
         """Get camera statistics"""

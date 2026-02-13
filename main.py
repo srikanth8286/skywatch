@@ -39,6 +39,7 @@ async def lifespan(app: FastAPI):
     # Store in app state
     app.state.camera_manager = camera_manager
     app.state.services = []
+    app.state._tasks = []  # Track background tasks for error handling
     
     # Initialize and start services
     if settings.timelapse.enabled:
@@ -65,6 +66,10 @@ async def lifespan(app: FastAPI):
         await motion_service.start()
         logger.info("Motion detection service started")
     
+    # Set up a global exception handler for unhandled task errors
+    loop = asyncio.get_running_loop()
+    loop.set_exception_handler(_handle_task_exception)
+    
     logger.info(f"SkyWatch is ready! Access at http://localhost:{settings.server.port}")
     
     yield
@@ -72,10 +77,26 @@ async def lifespan(app: FastAPI):
     # Shutdown
     logger.info("Shutting down SkyWatch...")
     for service in app.state.services:
-        await service.stop()
+        try:
+            await service.stop()
+        except Exception as e:
+            logger.error(f"Error stopping service: {e}")
     if app.state.camera_manager:
-        await app.state.camera_manager.stop()
+        try:
+            await app.state.camera_manager.stop()
+        except Exception as e:
+            logger.error(f"Error stopping camera: {e}")
     logger.info("SkyWatch stopped")
+
+
+def _handle_task_exception(loop, context):
+    """Global handler for unhandled asyncio task exceptions"""
+    exception = context.get("exception")
+    message = context.get("message", "")
+    if exception:
+        logger.error(f"Unhandled async exception: {exception} - {message}", exc_info=exception)
+    else:
+        logger.error(f"Unhandled async error: {message}")
 
 
 # Create FastAPI app

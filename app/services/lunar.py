@@ -7,8 +7,12 @@ import cv2
 import numpy as np
 from pathlib import Path
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger(__name__)
+
+# Thread pool for CPU-heavy CV operations
+_cv_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="lunar-cv")
 
 
 class LunarService:
@@ -89,34 +93,39 @@ class LunarService:
         frame = self.camera.get_frame()
         if frame is None:
             return
+        
+        # Run heavy CV operations off the event loop
+        loop = asyncio.get_running_loop()
+        best_circle = await loop.run_in_executor(
+            _cv_executor, self._find_moon_sync, frame
+        )
+        
+        if best_circle:
+            await self._capture_moon(frame, best_circle)
+    
+    def _find_moon_sync(self, frame):
+        """Find moon in frame using HoughCircles (runs in thread pool)"""
+        try:
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             
-        # Convert to grayscale
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        
-        # Find bright areas (moon should be bright against dark sky)
-        _, thresh = cv2.threshold(
-            gray,
-            self.settings.lunar.brightness_threshold,
-            255,
-            cv2.THRESH_BINARY
-        )
-        
-        # Apply Gaussian blur to reduce noise
-        blurred = cv2.GaussianBlur(gray, (9, 9), 2)
-        
-        # Find circles (potential moon)
-        circles = cv2.HoughCircles(
-            blurred,
-            cv2.HOUGH_GRADIENT,
-            dp=1,
-            minDist=100,
-            param1=50,
-            param2=30,
-            minRadius=self.settings.lunar.min_radius,
-            maxRadius=self.settings.lunar.max_radius
-        )
-        
-        if circles is not None and len(circles[0]) > 0:
+            # Apply Gaussian blur to reduce noise
+            blurred = cv2.GaussianBlur(gray, (9, 9), 2)
+            
+            # Find circles (potential moon)
+            circles = cv2.HoughCircles(
+                blurred,
+                cv2.HOUGH_GRADIENT,
+                dp=1,
+                minDist=100,
+                param1=50,
+                param2=30,
+                minRadius=self.settings.lunar.min_radius,
+                maxRadius=self.settings.lunar.max_radius
+            )
+            
+            if circles is None or len(circles[0]) == 0:
+                return None
+            
             # Take the brightest circle
             circles = np.uint16(np.around(circles))
             best_circle = None
@@ -130,10 +139,12 @@ class LunarService:
                 
                 if mean_brightness > max_brightness:
                     max_brightness = mean_brightness
-                    best_circle = (x, y, r)
-                    
-            if best_circle:
-                await self._capture_moon(frame, best_circle)
+                    best_circle = (int(x), int(y), int(r))
+            
+            return best_circle
+        except Exception as e:
+            logger.error(f"Error in moon detection: {e}")
+            return None
                 
     async def _capture_moon(self, frame, circle_info):
         """Capture moon and update composite"""
@@ -144,10 +155,11 @@ class LunarService:
         filename = now.strftime("%Y-%m-%d_%H-%M-%S.jpg")
         filepath = self.raw_path / filename
         
-        # Draw circle on frame for debugging
         debug_frame = frame.copy()
         cv2.circle(debug_frame, (x, y), r, (0, 255, 255), 2)
-        cv2.imwrite(str(filepath), debug_frame)
+        
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(_cv_executor, cv2.imwrite, str(filepath), debug_frame)
         
         self.detection_count += 1
         logger.info(f"Moon detected and captured: {filename} at ({x}, {y}) radius {r}")
@@ -172,8 +184,9 @@ class LunarService:
         # Use maximum pixel values to accumulate moon trails
         self.composite_image = np.maximum(self.composite_image, moon_region)
         
-        # Save composite
-        cv2.imwrite(str(self.composite_path), self.composite_image)
+        # Save composite in executor
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(_cv_executor, cv2.imwrite, str(self.composite_path), self.composite_image)
         logger.debug("Lunar composite image updated")
         
     def get_stats(self) -> dict:

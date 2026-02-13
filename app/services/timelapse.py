@@ -7,9 +7,12 @@ import cv2
 from pathlib import Path
 from datetime import datetime
 import numpy as np
-import subprocess
 import tempfile
 import shutil
+from concurrent.futures import ThreadPoolExecutor
+
+# Shared thread pool for blocking I/O (cv2.imwrite, file ops)
+_io_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="timelapse-io")
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +109,10 @@ class TimelapseService:
         
         encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), self.settings.timelapse.quality]
         try:
-            success = cv2.imwrite(str(temp_path), frame, encode_param)
+            loop = asyncio.get_running_loop()
+            success = await loop.run_in_executor(
+                _io_executor, cv2.imwrite, str(temp_path), frame, encode_param
+            )
         except Exception as e:
             logger.error(f"Failed to write frame {filename}: {e}", exc_info=True)
             return
@@ -150,7 +156,7 @@ class TimelapseService:
                 if self.frame_buffer:
                     f.write(f"file '{self.frame_buffer[-1]}'\n")
             
-            # Compile segment
+            # Compile segment using async subprocess (non-blocking)
             cmd = [
                 'ffmpeg', '-y', '-loglevel', 'error',
                 '-f', 'concat', '-safe', '0', '-i', list_file,
@@ -162,10 +168,23 @@ class TimelapseService:
                 str(temp_segment)
             ]
             
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-            
-            if result.returncode != 0:
-                logger.error(f"Failed to compile segment: {result.stderr}")
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                _, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
+                
+                if proc.returncode != 0:
+                    logger.error(f"Failed to compile segment: {stderr.decode()}")
+                    return
+            except asyncio.TimeoutError:
+                logger.error("FFmpeg segment compilation timed out")
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
                 return
             
             # Append to daily video or create new
@@ -191,8 +210,6 @@ class TimelapseService:
             logger.info(f"Compiled {len(self.frame_buffer)} frames into video segment")
             self.frame_buffer = []
             
-        except subprocess.TimeoutExpired:
-            logger.error("FFmpeg compilation timed out")
         except Exception as e:
             logger.error(f"Error compiling buffer: {e}", exc_info=True)
         finally:
@@ -204,7 +221,8 @@ class TimelapseService:
                     logger.warning(f"Failed to delete list file: {e}")
     
     async def _append_to_video(self, segment_path: Path):
-        """Append video segment to daily video"""
+        """Append video segment to daily video (non-blocking)"""
+        concat_file = None
         try:
             # Create concat list
             with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
@@ -215,7 +233,7 @@ class TimelapseService:
             # Create temp output
             temp_output = self.current_video_path.with_suffix('.tmp.mp4')
             
-            # Concatenate videos
+            # Concatenate videos using async subprocess
             cmd = [
                 'ffmpeg', '-y', '-loglevel', 'error',
                 '-f', 'concat', '-safe', '0', '-i', concat_file,
@@ -223,20 +241,35 @@ class TimelapseService:
                 str(temp_output)
             ]
             
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            Path(concat_file).unlink()
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
             
-            if result.returncode == 0:
-                # Replace old video with new concatenated one
+            if proc.returncode == 0:
                 shutil.move(str(temp_output), str(self.current_video_path))
-                logger.info(f"Appended segment to daily video")
+                logger.info("Appended segment to daily video")
             else:
-                logger.error(f"Failed to append segment: {result.stderr}")
+                logger.error(f"Failed to append segment: {stderr.decode()}")
                 if temp_output.exists():
                     temp_output.unlink()
                     
+        except asyncio.TimeoutError:
+            logger.error("FFmpeg append timed out")
+            try:
+                proc.kill()
+            except Exception:
+                pass
         except Exception as e:
             logger.error(f"Error appending to video: {e}")
+        finally:
+            if concat_file and Path(concat_file).exists():
+                try:
+                    Path(concat_file).unlink()
+                except Exception:
+                    pass
             
     def get_stats(self) -> dict:
         """Get service statistics"""

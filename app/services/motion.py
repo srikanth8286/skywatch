@@ -8,8 +8,12 @@ import numpy as np
 from pathlib import Path
 from datetime import datetime
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger(__name__)
+
+# Thread pool for CPU-heavy CV operations
+_cv_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="motion-cv")
 
 
 class MotionDetectionService:
@@ -59,53 +63,64 @@ class MotionDetectionService:
         while self.is_running:
             try:
                 await self._detect_motion()
-                await asyncio.sleep(0.1)  # Check 10 times per second
+                await asyncio.sleep(0.5)  # Check 2 times per second (was 10x — way too much)
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(f"Error in motion detection: {e}")
-                await asyncio.sleep(1)
+                logger.error(f"Error in motion detection: {e}", exc_info=True)
+                await asyncio.sleep(2)
                 
     async def _detect_motion(self):
         """Detect motion in current frame"""
         frame = self.camera.get_frame()
         if frame is None:
             return
-            
-        # Convert to grayscale and blur
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        gray = cv2.GaussianBlur(gray, (21, 21), 0)
         
-        # Initialize previous frame
-        if self.previous_frame is None:
-            self.previous_frame = gray
-            return
-            
-        # Compute difference
-        frame_delta = cv2.absdiff(self.previous_frame, gray)
-        thresh = cv2.threshold(frame_delta, self.settings.motion.sensitivity, 255, cv2.THRESH_BINARY)[1]
+        # Run heavy CV operations off the event loop
+        loop = asyncio.get_running_loop()
+        motion_detected = await loop.run_in_executor(
+            _cv_executor, self._process_frame_sync, frame
+        )
         
-        # Dilate to fill in holes
-        thresh = cv2.dilate(thresh, None, iterations=2)
-        
-        # Find contours
-        contours, _ = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        # Check for significant motion
-        motion_detected = False
-        for contour in contours:
-            if cv2.contourArea(contour) >= self.settings.motion.min_area:
-                motion_detected = True
-                break
-                
         if motion_detected:
             current_time = time.time()
             if current_time - self.last_detection_time >= self.settings.motion.cooldown:
                 await self._capture_burst(frame)
                 self.last_detection_time = current_time
+    
+    def _process_frame_sync(self, frame) -> bool:
+        """Process frame for motion detection (runs in thread pool)"""
+        try:
+            # Convert to grayscale and blur
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            gray = cv2.GaussianBlur(gray, (21, 21), 0)
+            
+            # Initialize previous frame
+            if self.previous_frame is None:
+                self.previous_frame = gray
+                return False
                 
-        # Update previous frame
-        self.previous_frame = gray
+            # Compute difference
+            frame_delta = cv2.absdiff(self.previous_frame, gray)
+            thresh = cv2.threshold(frame_delta, self.settings.motion.sensitivity, 255, cv2.THRESH_BINARY)[1]
+            
+            # Dilate to fill in holes
+            thresh = cv2.dilate(thresh, None, iterations=2)
+            
+            # Find contours
+            contours, _ = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            # Update previous frame
+            self.previous_frame = gray
+            
+            # Check for significant motion
+            for contour in contours:
+                if cv2.contourArea(contour) >= self.settings.motion.min_area:
+                    return True
+            return False
+        except Exception as e:
+            logger.error(f"Error in motion frame processing: {e}")
+            return False
         
     async def _capture_burst(self, trigger_frame):
         """Capture burst of images when motion detected"""
