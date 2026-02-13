@@ -1,5 +1,5 @@
 """
-Timelapse capture service
+Timelapse capture service with incremental video compilation
 """
 import asyncio
 import logging
@@ -7,12 +7,15 @@ import cv2
 from pathlib import Path
 from datetime import datetime
 import numpy as np
+import subprocess
+import tempfile
+import shutil
 
 logger = logging.getLogger(__name__)
 
 
 class TimelapseService:
-    """Service for capturing timelapse images"""
+    """Service for capturing timelapse images and compiling to video"""
     
     def __init__(self, camera_manager, settings):
         self.camera = camera_manager
@@ -20,10 +23,19 @@ class TimelapseService:
         self.is_running = False
         self.task = None
         self.capture_count = 0
+        self.daily_frame_count = 0
+        
+        # Frame buffer for incremental compilation
+        self.frame_buffer = []
+        self.buffer_size = 20  # Compile every 20 frames
         
         # Setup storage
         self.base_path = Path(settings.storage.base_path) / "timelapse"
-        self.base_path.mkdir(parents=True, exist_ok=True)
+        self.temp_frames_path = self.base_path / "temp"
+        self.temp_frames_path.mkdir(parents=True, exist_ok=True)
+        
+        self.current_date = None
+        self.current_video_path = None
         
     async def start(self):
         """Start timelapse service"""
@@ -34,6 +46,12 @@ class TimelapseService:
     async def stop(self):
         """Stop timelapse service"""
         self.is_running = False
+        
+        # Compile any remaining frames before stopping
+        if self.frame_buffer:
+            logger.info("Compiling remaining frames before shutdown...")
+            await self._compile_buffer()
+        
         if self.task:
             self.task.cancel()
             try:
@@ -55,29 +73,145 @@ class TimelapseService:
                 await asyncio.sleep(5)
                 
     async def _capture_frame(self):
-        """Capture a single frame"""
+        """Capture a single frame and add to buffer"""
         frame = self.camera.get_frame()
         if frame is None:
             logger.warning("No frame available for timelapse")
             return
-            
-        # Get current date for daily organization
-        now = datetime.now()
-        date_dir = self.base_path / now.strftime("%Y-%m-%d") / "frames"
-        date_dir.mkdir(parents=True, exist_ok=True)
         
-        # Save frame
+        now = datetime.now()
+        date_str = now.strftime("%Y-%m-%d")
+        
+        # Check if we've moved to a new day
+        if self.current_date != date_str:
+            # Flush any remaining frames from previous day
+            if self.frame_buffer:
+                await self._compile_buffer()
+            
+            self.current_date = date_str
+            self.current_video_path = self.base_path / f"{date_str}.mp4"
+            self.daily_frame_count = 0
+            logger.info(f"Started new timelapse for {date_str}")
+        
+        # Save frame to temp buffer
         filename = now.strftime("%Y-%m-%d_%H-%M-%S.jpg")
-        filepath = date_dir / filename
+        temp_path = self.temp_frames_path / filename
         
         encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), self.settings.timelapse.quality]
-        success = cv2.imwrite(str(filepath), frame, encode_param)
+        success = cv2.imwrite(str(temp_path), frame, encode_param)
         
         if success:
+            self.frame_buffer.append(str(temp_path))
             self.capture_count += 1
+            self.daily_frame_count += 1
             logger.info(f"Timelapse frame captured: {filename} (#{self.capture_count})")
+            
+            # Compile buffer when it reaches threshold
+            if len(self.frame_buffer) >= self.buffer_size:
+                await self._compile_buffer()
         else:
             logger.error(f"Failed to save timelapse frame: {filename}")
+    
+    async def _compile_buffer(self):
+        """Compile buffered frames into video segment and append to daily video"""
+        if not self.frame_buffer:
+            return
+        
+        try:
+            fps = self.settings.timelapse.video_fps
+            
+            # Create temporary segment
+            temp_segment = self.temp_frames_path / f"segment_{datetime.now().strftime('%H%M%S')}.mp4"
+            
+            # Create file list for ffmpeg
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+                list_file = f.name
+                for frame_path in self.frame_buffer:
+                    f.write(f"file '{frame_path}'\n")
+                    f.write(f"duration {1.0/fps}\n")
+                # Duplicate last frame
+                if self.frame_buffer:
+                    f.write(f"file '{self.frame_buffer[-1]}'\n")
+            
+            # Compile segment
+            cmd = [
+                'ffmpeg', '-y', '-loglevel', 'error',
+                '-f', 'concat', '-safe', '0', '-i', list_file,
+                '-vf', f'fps={fps}',
+                '-pix_fmt', 'yuv420p',
+                '-c:v', 'libx264',
+                '-preset', 'ultrafast',  # Fast encoding for real-time
+                '-crf', '23',
+                str(temp_segment)
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            Path(list_file).unlink()
+            
+            if result.returncode != 0:
+                logger.error(f"Failed to compile segment: {result.stderr}")
+                return
+            
+            # Append to daily video or create new
+            if self.current_video_path.exists():
+                # Append to existing video
+                await self._append_to_video(temp_segment)
+            else:
+                # First segment of the day - just rename it
+                shutil.move(str(temp_segment), str(self.current_video_path))
+                logger.info(f"Created daily video: {self.current_video_path.name}")
+            
+            # Clean up temp segment if it still exists
+            if temp_segment.exists():
+                temp_segment.unlink()
+            
+            # Delete processed frames
+            for frame_path in self.frame_buffer:
+                try:
+                    Path(frame_path).unlink()
+                except Exception as e:
+                    logger.warning(f"Failed to delete temp frame {frame_path}: {e}")
+            
+            logger.info(f"Compiled {len(self.frame_buffer)} frames into video segment")
+            self.frame_buffer = []
+            
+        except Exception as e:
+            logger.error(f"Error compiling buffer: {e}")
+    
+    async def _append_to_video(self, segment_path: Path):
+        """Append video segment to daily video"""
+        try:
+            # Create concat list
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+                concat_file = f.name
+                f.write(f"file '{self.current_video_path.absolute()}'\n")
+                f.write(f"file '{segment_path.absolute()}'\n")
+            
+            # Create temp output
+            temp_output = self.current_video_path.with_suffix('.tmp.mp4')
+            
+            # Concatenate videos
+            cmd = [
+                'ffmpeg', '-y', '-loglevel', 'error',
+                '-f', 'concat', '-safe', '0', '-i', concat_file,
+                '-c', 'copy',  # Copy without re-encoding (fast)
+                str(temp_output)
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            Path(concat_file).unlink()
+            
+            if result.returncode == 0:
+                # Replace old video with new concatenated one
+                shutil.move(str(temp_output), str(self.current_video_path))
+                logger.info(f"Appended segment to daily video")
+            else:
+                logger.error(f"Failed to append segment: {result.stderr}")
+                if temp_output.exists():
+                    temp_output.unlink()
+                    
+        except Exception as e:
+            logger.error(f"Error appending to video: {e}")
             
     def get_stats(self) -> dict:
         """Get service statistics"""
@@ -85,30 +219,33 @@ class TimelapseService:
             "enabled": self.settings.timelapse.enabled,
             "is_running": self.is_running,
             "capture_count": self.capture_count,
+            "daily_frame_count": self.daily_frame_count,
+            "buffer_size": len(self.frame_buffer),
             "interval": self.settings.timelapse.interval,
-            "storage_path": str(self.base_path)
+            "storage_path": str(self.base_path),
+            "current_video": str(self.current_video_path) if self.current_video_path else None
         }
         
     def get_available_dates(self) -> list:
-        """Get list of dates with captured timelapses"""
+        """Get list of dates with compiled timelapse videos"""
         dates = []
         if self.base_path.exists():
-            for date_dir in sorted(self.base_path.iterdir(), reverse=True):
-                if date_dir.is_dir() and (date_dir / "frames").exists():
-                    dates.append(date_dir.name)
+            for video_file in sorted(self.base_path.glob("*.mp4"), reverse=True):
+                if video_file.stem != "temp":  # Skip temp files
+                    dates.append(video_file.stem)
         return dates
         
+    def get_video_path(self, date: str) -> Path:
+        """Get path to compiled video for a specific date"""
+        return self.base_path / f"{date}.mp4"
+    
     def get_frames_for_date(self, date: str) -> list:
-        """Get list of frames for a specific date"""
-        date_dir = self.base_path / date / "frames"
-        if not date_dir.exists():
-            return []
-            
-        frames = []
-        for frame_file in sorted(date_dir.glob("*.jpg")):
-            frames.append({
-                "filename": frame_file.name,
-                "path": str(frame_file.relative_to(self.base_path)),
-                "timestamp": frame_file.stem.replace("_", " ")
-            })
-        return frames
+        """Get video info for a specific date (for backward compatibility)"""
+        video_path = self.get_video_path(date)
+        if video_path.exists():
+            return [{
+                "type": "video",
+                "path": str(video_path.relative_to(self.base_path.parent)),
+                "filename": video_path.name
+            }]
+        return []

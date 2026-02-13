@@ -18,6 +18,7 @@ class StorageSettings(BaseModel):
     base_path: str = "/storage"
     nas_enabled: bool = False
     nas_path: str = ""
+    retention_days: int = 30
 
 
 class TimelapseSettings(BaseModel):

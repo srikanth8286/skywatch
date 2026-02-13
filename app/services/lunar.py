@@ -183,3 +183,11 @@ class LunarService:
     def get_composite_path(self) -> Path:
         """Get path to composite image"""
         return self.composite_path
+    
+    def reset_composite(self):
+        """Reset/clear the composite image"""
+        self.composite_image = None
+        if self.composite_path.exists():
+            self.composite_path.unlink()
+        self.detection_count = 0
+        logger.info("Lunar composite reset")

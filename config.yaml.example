@@ -14,6 +14,7 @@ storage:
   # For NAS, mount before starting: sudo mount -t cifs //nas-ip/share /storage -o username=user,password=pass
   nas_enabled: false
   nas_path: ""  # e.g., //192.168.1.100/skywatch or nfs://192.168.1.100:/export/skywatch
+  retention_days: 30  # How many days to keep captured data
 
 # Timelapse Settings
 timelapse:

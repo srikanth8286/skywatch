@@ -39,6 +39,9 @@ function loadTabContent(tabName) {
         case 'status':
             loadStatus();
             break;
+        case 'settings':
+            loadSettings();
+            break;
     }
 }
 
@@ -71,7 +74,7 @@ async function loadTimelapseData() {
             : '<option value="">No dates available</option>';
         
         if (data.dates.length > 0) {
-            await loadTimelapseFrames(data.dates[0]);
+            await loadTimelapseVideo(data.dates[0]);
         }
     } catch (error) {
         console.error('Error loading timelapse dates:', error);
@@ -79,48 +82,90 @@ async function loadTimelapseData() {
 }
 
 document.getElementById('timelapse-date').addEventListener('change', async (e) => {
-    await loadTimelapseFrames(e.target.value);
+    await loadTimelapseVideo(e.target.value);
 });
 
-async function loadTimelapseFrames(date) {
+async function loadTimelapseVideo(date) {
     try {
         const response = await fetch(`/api/timelapse/frames/${date}`);
         const data = await response.json();
-        document.getElementById('timelapse-info').textContent = 
-            `Frame count: ${data.count} | Date: ${data.date}`;
+        
+        const video = document.getElementById('timelapse-player');
+        const placeholder = document.getElementById('timelapse-placeholder');
+        
+        if (data.exists) {
+            document.getElementById('timelapse-info').textContent = 
+                `Playing timelapse for ${data.date}`;
+            
+            // Set video source and load
+            video.querySelector('source').src = `/api/timelapse/video/${date}`;
+            video.load();
+            video.style.display = 'block';
+            placeholder.style.display = 'none';
+            
+            // Auto-play
+            video.play().catch(err => {
+                console.log('Auto-play prevented:', err);
+            });
+        } else {
+            document.getElementById('timelapse-info').textContent = 
+                data.message || 'No video available for this date.';
+            video.style.display = 'none';
+            placeholder.style.display = 'block';
+        }
     } catch (error) {
-        console.error('Error loading timelapse frames:', error);
+        console.error('Error loading timelapse video:', error);
     }
 }
 
 let timelapseStreamActive = false;
 
-document.getElementById('play-timelapse').addEventListener('click', () => {
+document.getElementById('download-timelapse').addEventListener('click', async () => {
     const date = document.getElementById('timelapse-date').value;
-    const speed = document.getElementById('playback-speed').value;
     
     if (!date) {
         alert('Please select a date');
         return;
     }
     
-    const img = document.getElementById('timelapse-player');
-    const placeholder = document.getElementById('timelapse-placeholder');
+    const statusEl = document.getElementById('download-status');
+    const btn = document.getElementById('download-timelapse');
     
-    img.src = `/api/timelapse/play/${date}?speed=${speed}&t=${Date.now()}`;
-    img.style.display = 'block';
-    placeholder.style.display = 'none';
-    timelapseStreamActive = true;
-});
-
-document.getElementById('stop-timelapse').addEventListener('click', () => {
-    const img = document.getElementById('timelapse-player');
-    const placeholder = document.getElementById('timelapse-placeholder');
-    
-    img.src = '';
-    img.style.display = 'none';
-    placeholder.style.display = 'block';
-    timelapseStreamActive = false;
+    try {
+        btn.disabled = true;
+        statusEl.style.display = 'block';
+        statusEl.textContent = '⏳ Compiling video... This may take a minute...';
+        statusEl.style.color = '#667eea';
+        
+        const response = await fetch(`/api/timelapse/download/${date}?fps=24`);
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Download failed');
+        }
+        
+        // Download the file
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `skywatch_timelapse_${date}.mp4`;
+        a.click();
+        URL.revokeObjectURL(url);
+        
+        statusEl.textContent = '✅ Video downloaded successfully!';
+        statusEl.style.color = '#28a745';
+        
+        setTimeout(() => {
+            statusEl.style.display = 'none';
+        }, 3000);
+    } catch (error) {
+        console.error('Error downloading timelapse:', error);
+        statusEl.textContent = '❌ ' + error.message;
+        statusEl.style.color = '#dc3545';
+    } finally {
+        btn.disabled = false;
+    }
 });
 
 // Solargraph functionality
@@ -143,6 +188,27 @@ function loadSolargraph() {
 
 document.getElementById('refresh-solargraph').addEventListener('click', loadSolargraph);
 
+document.getElementById('clear-solargraph').addEventListener('click', async () => {
+    if (!confirm('Are you sure you want to clear the solargraph composite? This cannot be undone.')) {
+        return;
+    }
+    
+    try {
+        const response = await fetch('/api/solargraph/reset', { method: 'POST' });
+        const data = await response.json();
+        
+        if (response.ok) {
+            alert(data.message);
+            loadSolargraph();
+        } else {
+            alert('Failed to clear composite');
+        }
+    } catch (error) {
+        console.error('Error clearing solargraph:', error);
+        alert('Failed to clear composite');
+    }
+});
+
 // Lunar functionality
 function loadLunar() {
     const img = document.getElementById('lunar-composite');
@@ -162,6 +228,27 @@ function loadLunar() {
 }
 
 document.getElementById('refresh-lunar').addEventListener('click', loadLunar);
+
+document.getElementById('clear-lunar').addEventListener('click', async () => {
+    if (!confirm('Are you sure you want to clear the lunar composite? This cannot be undone.')) {
+        return;
+    }
+    
+    try {
+        const response = await fetch('/api/lunar/reset', { method: 'POST' });
+        const data = await response.json();
+        
+        if (response.ok) {
+            alert(data.message);
+            loadLunar();
+        } else {
+            alert('Failed to clear composite');
+        }
+    } catch (error) {
+        console.error('Error clearing lunar:', error);
+        alert('Failed to clear composite');
+    }
+});
 
 // Motion detection functionality
 async function loadMotionEvents() {
@@ -271,3 +358,167 @@ setInterval(() => {
 
 // Initial load
 loadStatus();
+
+// Settings Management
+let currentSettings = {};
+
+async function loadSettings() {
+    try {
+        const response = await fetch('/api/settings');
+        const settings = await response.json();
+        currentSettings = settings;
+        populateSettingsForm(settings);
+    } catch (error) {
+        console.error('Error loading settings:', error);
+        showSettingsMessage('Failed to load settings', 'error');
+    }
+}
+
+function populateSettingsForm(settings) {
+    // Camera settings
+    document.getElementById('camera-url').value = settings.camera?.rtsp_url || '';
+    document.getElementById('camera-reconnect').value = settings.camera?.reconnect_interval || 5;
+    document.getElementById('camera-width').value = settings.camera?.frame_width || 1920;
+    document.getElementById('camera-height').value = settings.camera?.frame_height || 1080;
+    
+    // Storage settings
+    document.getElementById('storage-path').value = settings.storage?.base_path || '';
+    document.getElementById('storage-retention').value = settings.storage?.retention_days || 30;
+    
+    // Timelapse settings
+    document.getElementById('timelapse-enabled').checked = settings.timelapse?.enabled !== false;
+    document.getElementById('timelapse-interval').value = settings.timelapse?.interval || 60;
+    document.getElementById('timelapse-quality').value = settings.timelapse?.quality || 90;
+    document.getElementById('timelapse-fps').value = settings.timelapse?.video_fps || 24;
+    document.getElementById('timelapse-daily').checked = settings.timelapse?.daily_video !== false;
+    
+    // Motion settings
+    document.getElementById('motion-enabled').checked = settings.motion?.enabled !== false;
+    document.getElementById('motion-sensitivity').value = settings.motion?.sensitivity || 25;
+    document.getElementById('motion-sensitivity-value').textContent = settings.motion?.sensitivity || 25;
+    document.getElementById('motion-min-area').value = settings.motion?.min_area || 500;
+    document.getElementById('motion-burst-count').value = settings.motion?.burst_count || 10;
+    document.getElementById('motion-burst-fps').value = settings.motion?.burst_fps || 10;
+    document.getElementById('motion-cooldown').value = settings.motion?.cooldown || 5;
+    
+    // Solargraph settings
+    document.getElementById('solargraph-enabled').checked = settings.solargraph?.enabled !== false;
+    document.getElementById('solargraph-interval').value = settings.solargraph?.detection_interval || 30;
+    document.getElementById('solargraph-latitude').value = settings.solargraph?.latitude || 0;
+    document.getElementById('solargraph-longitude').value = settings.solargraph?.longitude || 0;
+    
+    // Lunar settings
+    document.getElementById('lunar-enabled').checked = settings.lunar?.enabled !== false;
+    document.getElementById('lunar-interval').value = settings.lunar?.detection_interval || 60;
+}
+
+function getSettingsFromForm() {
+    const formData = new FormData(document.getElementById('settings-form'));
+    const settings = {
+        camera: {
+            rtsp_url: document.getElementById('camera-url').value,
+            reconnect_interval: parseInt(document.getElementById('camera-reconnect').value),
+            frame_width: parseInt(document.getElementById('camera-width').value),
+            frame_height: parseInt(document.getElementById('camera-height').value)
+        },
+        storage: {
+            base_path: document.getElementById('storage-path').value,
+            nas_enabled: currentSettings.storage?.nas_enabled || false,
+            nas_path: currentSettings.storage?.nas_path || "",
+            retention_days: parseInt(document.getElementById('storage-retention').value)
+        },
+        timelapse: {
+            enabled: document.getElementById('timelapse-enabled').checked,
+            interval: parseInt(document.getElementById('timelapse-interval').value),
+            quality: parseInt(document.getElementById('timelapse-quality').value),
+            daily_video: document.getElementById('timelapse-daily').checked,
+            video_fps: parseInt(document.getElementById('timelapse-fps').value)
+        },
+        solargraph: {
+            enabled: document.getElementById('solargraph-enabled').checked,
+            detection_interval: parseInt(document.getElementById('solargraph-interval').value),
+            brightness_threshold: currentSettings.solargraph?.brightness_threshold || 200,
+            min_radius: currentSettings.solargraph?.min_radius || 10,
+            max_radius: currentSettings.solargraph?.max_radius || 100,
+            daytime_only: currentSettings.solargraph?.daytime_only !== false,
+            latitude: parseFloat(document.getElementById('solargraph-latitude').value),
+            longitude: parseFloat(document.getElementById('solargraph-longitude').value)
+        },
+        lunar: {
+            enabled: document.getElementById('lunar-enabled').checked,
+            detection_interval: parseInt(document.getElementById('lunar-interval').value),
+            brightness_threshold: currentSettings.lunar?.brightness_threshold || 150,
+            min_radius: currentSettings.lunar?.min_radius || 15,
+            max_radius: currentSettings.lunar?.max_radius || 150,
+            nighttime_only: currentSettings.lunar?.nighttime_only !== false
+        },
+        motion: {
+            enabled: document.getElementById('motion-enabled').checked,
+            sensitivity: parseInt(document.getElementById('motion-sensitivity').value),
+            min_area: parseInt(document.getElementById('motion-min-area').value),
+            burst_count: parseInt(document.getElementById('motion-burst-count').value),
+            burst_fps: parseInt(document.getElementById('motion-burst-fps').value),
+            cooldown: parseInt(document.getElementById('motion-cooldown').value)
+        },
+        server: currentSettings.server || {
+            host: "0.0.0.0",
+            port: 8080,
+            cors_origins: ["*"]
+        },
+        advanced: currentSettings.advanced || {
+            max_frame_queue: 30,
+            jpeg_quality_live: 85,
+            log_level: "INFO"
+        }
+    };
+    
+    return settings;
+}
+
+async function saveSettings() {
+    try {
+        const settings = getSettingsFromForm();
+        const response = await fetch('/api/settings', {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(settings)
+        });
+        
+        const result = await response.json();
+        
+        if (response.ok) {
+            showSettingsMessage('✅ ' + result.message, 'success');
+            currentSettings = settings;
+        } else {
+            showSettingsMessage('❌ ' + result.detail, 'error');
+        }
+    } catch (error) {
+        console.error('Error saving settings:', error);
+        showSettingsMessage('❌ Failed to save settings', 'error');
+    }
+}
+
+function showSettingsMessage(message, type) {
+    const messageDiv = document.getElementById('settings-message');
+    messageDiv.textContent = message;
+    messageDiv.className = 'settings-message ' + type;
+    messageDiv.style.display = 'block';
+    
+    setTimeout(() => {
+        messageDiv.style.display = 'none';
+    }, 5000);
+}
+
+// Settings event listeners
+document.getElementById('save-settings').addEventListener('click', saveSettings);
+document.getElementById('reset-settings').addEventListener('click', () => {
+    populateSettingsForm(currentSettings);
+    showSettingsMessage('Settings reset to current values', 'info');
+});
+
+// Motion sensitivity slider
+document.getElementById('motion-sensitivity').addEventListener('input', (e) => {
+    document.getElementById('motion-sensitivity-value').textContent = e.target.value;
+});

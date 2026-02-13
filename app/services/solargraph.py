@@ -108,44 +108,93 @@ class SolargraphService:
         # Convert to grayscale
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         
-        # Find bright areas
-        _, thresh = cv2.threshold(
-            gray,
-            self.settings.solargraph.brightness_threshold,
-            255,
-            cv2.THRESH_BINARY
-        )
+        # Apply Gaussian blur to reduce noise
+        blurred = cv2.GaussianBlur(gray, (9, 9), 2)
         
-        # Find circles (potential sun)
+        # Find circles (potential sun) with stricter parameters
         circles = cv2.HoughCircles(
-            gray,
+            blurred,
             cv2.HOUGH_GRADIENT,
             dp=1,
-            minDist=100,
-            param1=50,
-            param2=30,
+            minDist=200,  # Increased - sun should be alone in the sky
+            param1=100,    # Increased - stricter edge detection
+            param2=50,     # Increased - stricter circle detection
             minRadius=self.settings.solargraph.min_radius,
             maxRadius=self.settings.solargraph.max_radius
         )
         
         if circles is not None and len(circles[0]) > 0:
-            # Take the brightest circle
+            # Take the brightest circle that meets sun criteria
             circles = np.uint16(np.around(circles))
             best_circle = None
-            max_brightness = 0
+            max_score = 0
             
             for circle in circles[0]:
                 x, y, r = circle
+                
+                # Validate this could be the sun
+                if not self._validate_sun_candidate(gray, x, y, r):
+                    continue
+                
+                # Calculate mask for this circle
                 mask = np.zeros_like(gray)
                 cv2.circle(mask, (x, y), r, 255, -1)
                 mean_brightness = cv2.mean(gray, mask=mask)[0]
                 
-                if mean_brightness > max_brightness:
-                    max_brightness = mean_brightness
+                # Score based on brightness and size
+                # Sun should be very bright and reasonably sized
+                score = mean_brightness * (r / self.settings.solargraph.max_radius)
+                
+                if score > max_score and mean_brightness > self.settings.solargraph.brightness_threshold:
+                    max_score = score
                     best_circle = (x, y, r)
                     
             if best_circle:
                 await self._capture_sun(frame, best_circle)
+    
+    def _validate_sun_candidate(self, gray, x, y, r) -> bool:
+        """Validate if a circle could be the sun"""
+        h, w = gray.shape
+        
+        # Sun shouldn't be at the very edge of the frame
+        margin = 50
+        if x < margin or x > w - margin or y < margin or y > h - margin:
+            return False
+        
+        # Check if the circle area is uniformly bright (not just a small bright spot)
+        mask = np.zeros_like(gray)
+        cv2.circle(mask, (x, y), r, 255, -1)
+        
+        # Get pixel values in the circle
+        circle_pixels = gray[mask > 0]
+        if len(circle_pixels) == 0:
+            return False
+        
+        mean_brightness = np.mean(circle_pixels)
+        std_brightness = np.std(circle_pixels)
+        
+        # Sun should be very bright
+        if mean_brightness < self.settings.solargraph.brightness_threshold:
+            return False
+        
+        # Sun should be relatively uniform (not a random bright spot)
+        # Low standard deviation means uniform brightness
+        if std_brightness > 50:  # Too much variation
+            return False
+        
+        # Check the area around the circle - sun should have a glow/gradient
+        outer_mask = np.zeros_like(gray)
+        cv2.circle(outer_mask, (x, y), int(r * 1.5), 255, -1)
+        cv2.circle(outer_mask, (x, y), r, 0, -1)  # Remove inner circle
+        
+        outer_pixels = gray[outer_mask > 0]
+        if len(outer_pixels) > 0:
+            outer_brightness = np.mean(outer_pixels)
+            # There should be a significant drop in brightness outside the sun
+            if mean_brightness - outer_brightness < 30:
+                return False
+        
+        return True
                 
     async def _capture_sun(self, frame, circle_info):
         """Capture sun and update composite"""
@@ -202,3 +251,11 @@ class SolargraphService:
     def get_composite_path(self) -> Path:
         """Get path to composite image"""
         return self.composite_path
+    
+    def reset_composite(self):
+        """Reset/clear the composite image"""
+        self.composite_image = None
+        if self.composite_path.exists():
+            self.composite_path.unlink()
+        self.detection_count = 0
+        logger.info("Solargraph composite reset")

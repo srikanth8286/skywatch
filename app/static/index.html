@@ -20,6 +20,7 @@
             <button class="tab" data-tab="lunar">Lunar</button>
             <button class="tab" data-tab="motion">Motion</button>
             <button class="tab" data-tab="status">Status</button>
+            <button class="tab" data-tab="settings">⚙️ Settings</button>
         </nav>
 
         <main>
@@ -40,23 +41,22 @@
                     <select id="timelapse-date">
                         <option value="">Loading...</option>
                     </select>
-                    <label>Playback Speed:</label>
-                    <select id="playback-speed">
-                        <option value="1">1x</option>
-                        <option value="2">2x</option>
-                        <option value="5">5x</option>
-                        <option value="10">10x</option>
-                        <option value="24" selected>24x</option>
-                        <option value="30">30x</option>
-                        <option value="60">60x</option>
-                    </select>
-                    <button id="play-timelapse">▶ Play</button>
-                    <button id="stop-timelapse">⏹ Stop</button>
+                    <button id="download-timelapse">⬇️ Download MP4</button>
                 </div>
                 <div class="video-container">
-                    <img id="timelapse-player" src="" alt="Timelapse Player">
+                    <video id="timelapse-player" controls playsinline>
+                        <source src="" type="video/mp4">
+                        Your browser doesn't support video playback.
+                    </video>
                     <div class="placeholder" id="timelapse-placeholder">
-                        Select a date and click Play to view timelapse
+                        Select a date to view timelapse
+                    </div>
+                </div>
+                <div class="info">
+                    <p id="timelapse-info">Select a date to view timelapse</p>
+                    <p id="download-status" style="display:none; margin-top:10px;"></p>
+                </div>
+            </div>
                     </div>
                 </div>
                 <div class="info">
@@ -74,6 +74,7 @@
                 </div>
                 <div class="controls">
                     <button id="refresh-solargraph">🔄 Refresh</button>
+                    <button id="clear-solargraph" class="btn-danger">🗑️ Clear Composite</button>
                 </div>
                 <div class="info">
                     <p>The solargraph shows the sun's path across the sky. Each bright spot represents a captured sun position.</p>
@@ -90,6 +91,7 @@
                 </div>
                 <div class="controls">
                     <button id="refresh-lunar">🔄 Refresh</button>
+                    <button id="clear-lunar" class="btn-danger">🗑️ Clear Composite</button>
                 </div>
                 <div class="info">
                     <p>The lunar composite shows the moon's path across the night sky.</p>
@@ -113,6 +115,169 @@
                 </div>
                 <div id="status-info" class="status-grid">
                     <p class="placeholder">Loading status...</p>
+                </div>
+            </div>
+
+            <!-- Settings Tab -->
+            <div id="settings" class="tab-content">
+                <div class="settings-container">
+                    <h2>⚙️ System Settings</h2>
+                    <div class="settings-notice">
+                        <p>⚠️ Changes require a restart to take effect</p>
+                    </div>
+                    
+                    <form id="settings-form">
+                        <!-- Camera Settings -->
+                        <fieldset>
+                            <legend>📹 Camera Settings</legend>
+                            <div class="form-group">
+                                <label for="camera-url">RTSP URL:</label>
+                                <input type="text" id="camera-url" name="camera.rtsp_url" placeholder="rtsp://user:pass@ip:port/stream" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="camera-reconnect">Reconnect Interval (seconds):</label>
+                                <input type="number" id="camera-reconnect" name="camera.reconnect_interval" min="1" max="60" value="5">
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="camera-width">Frame Width:</label>
+                                    <input type="number" id="camera-width" name="camera.frame_width" min="640" value="1920">
+                                </div>
+                                <div class="form-group">
+                                    <label for="camera-height">Frame Height:</label>
+                                    <input type="number" id="camera-height" name="camera.frame_height" min="480" value="1080">
+                                </div>
+                            </div>
+                        </fieldset>
+
+                        <!-- Storage Settings -->
+                        <fieldset>
+                            <legend>💾 Storage Settings</legend>
+                            <div class="form-group">
+                                <label for="storage-path">Base Path:</label>
+                                <input type="text" id="storage-path" name="storage.base_path" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="storage-retention">Data Retention (days):</label>
+                                <input type="number" id="storage-retention" name="storage.retention_days" min="1" max="365" value="30">
+                                <small>How many days to keep captured data</small>
+                            </div>
+                        </fieldset>
+
+                        <!-- Timelapse Settings -->
+                        <fieldset>
+                            <legend>⏱️ Timelapse Settings</legend>
+                            <div class="form-group">
+                                <label>
+                                    <input type="checkbox" id="timelapse-enabled" name="timelapse.enabled" checked>
+                                    Enable Timelapse
+                                </label>
+                            </div>
+                            <div class="form-group">
+                                <label for="timelapse-interval">Capture Interval (seconds):</label>
+                                <input type="number" id="timelapse-interval" name="timelapse.interval" min="1" max="3600" value="60">
+                                <small>Time between each timelapse frame</small>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="timelapse-quality">JPEG Quality (1-100):</label>
+                                    <input type="number" id="timelapse-quality" name="timelapse.quality" min="1" max="100" value="90">
+                                </div>
+                                <div class="form-group">
+                                    <label for="timelapse-fps">Video FPS:</label>
+                                    <input type="number" id="timelapse-fps" name="timelapse.video_fps" min="1" max="60" value="24">
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label>
+                                    <input type="checkbox" id="timelapse-daily" name="timelapse.daily_video" checked>
+                                    Create daily video compilation
+                                </label>
+                            </div>
+                        </fieldset>
+
+                        <!-- Motion Detection Settings -->
+                        <fieldset>
+                            <legend>🎬 Motion Detection Settings</legend>
+                            <div class="form-group">
+                                <label>
+                                    <input type="checkbox" id="motion-enabled" name="motion.enabled" checked>
+                                    Enable Motion Detection
+                                </label>
+                            </div>
+                            <div class="form-group">
+                                <label for="motion-sensitivity">Sensitivity (0-100):</label>
+                                <input type="range" id="motion-sensitivity" name="motion.sensitivity" min="0" max="100" value="25">
+                                <span id="motion-sensitivity-value">25</span>
+                                <small>Lower = more sensitive</small>
+                            </div>
+                            <div class="form-group">
+                                <label for="motion-min-area">Minimum Area (pixels):</label>
+                                <input type="number" id="motion-min-area" name="motion.min_area" min="100" max="10000" value="500">
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="motion-burst-count">Burst Count:</label>
+                                    <input type="number" id="motion-burst-count" name="motion.burst_count" min="1" max="100" value="10">
+                                </div>
+                                <div class="form-group">
+                                    <label for="motion-burst-fps">Burst FPS:</label>
+                                    <input type="number" id="motion-burst-fps" name="motion.burst_fps" min="1" max="30" value="10">
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label for="motion-cooldown">Cooldown (seconds):</label>
+                                <input type="number" id="motion-cooldown" name="motion.cooldown" min="0" max="60" value="5">
+                            </div>
+                        </fieldset>
+
+                        <!-- Solargraph Settings -->
+                        <fieldset>
+                            <legend>☀️ Solargraph Settings</legend>
+                            <div class="form-group">
+                                <label>
+                                    <input type="checkbox" id="solargraph-enabled" name="solargraph.enabled" checked>
+                                    Enable Solargraph
+                                </label>
+                            </div>
+                            <div class="form-group">
+                                <label for="solargraph-interval">Detection Interval (seconds):</label>
+                                <input type="number" id="solargraph-interval" name="solargraph.detection_interval" min="10" max="300" value="30">
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="solargraph-latitude">Latitude:</label>
+                                    <input type="number" id="solargraph-latitude" name="solargraph.latitude" min="-90" max="90" step="0.0001" value="0">
+                                </div>
+                                <div class="form-group">
+                                    <label for="solargraph-longitude">Longitude:</label>
+                                    <input type="number" id="solargraph-longitude" name="solargraph.longitude" min="-180" max="180" step="0.0001" value="0">
+                                </div>
+                            </div>
+                        </fieldset>
+
+                        <!-- Lunar Settings -->
+                        <fieldset>
+                            <legend>🌙 Lunar Tracking Settings</legend>
+                            <div class="form-group">
+                                <label>
+                                    <input type="checkbox" id="lunar-enabled" name="lunar.enabled" checked>
+                                    Enable Lunar Tracking
+                                </label>
+                            </div>
+                            <div class="form-group">
+                                <label for="lunar-interval">Detection Interval (seconds):</label>
+                                <input type="number" id="lunar-interval" name="lunar.detection_interval" min="10" max="300" value="60">
+                            </div>
+                        </fieldset>
+
+                        <div class="form-actions">
+                            <button type="button" id="save-settings" class="btn-primary">💾 Save Settings</button>
+                            <button type="button" id="reset-settings" class="btn-secondary">🔄 Reset to Current</button>
+                        </div>
+                    </form>
+
+                    <div id="settings-message" class="settings-message" style="display:none;"></div>
                 </div>
             </div>
         </main>
