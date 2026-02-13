@@ -98,7 +98,11 @@ class TimelapseService:
         temp_path = self.temp_frames_path / filename
         
         encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), self.settings.timelapse.quality]
-        success = cv2.imwrite(str(temp_path), frame, encode_param)
+        try:
+            success = cv2.imwrite(str(temp_path), frame, encode_param)
+        except Exception as e:
+            logger.error(f"Failed to write frame {filename}: {e}", exc_info=True)
+            return
         
         if success:
             self.frame_buffer.append(str(temp_path))
@@ -117,6 +121,9 @@ class TimelapseService:
         if not self.frame_buffer:
             return
         
+        list_file = None
+        temp_segment = None
+        
         try:
             fps = self.settings.timelapse.video_fps
             
@@ -127,6 +134,9 @@ class TimelapseService:
             with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
                 list_file = f.name
                 for frame_path in self.frame_buffer:
+                    if not Path(frame_path).exists():
+                        logger.warning(f"Frame missing: {frame_path}")
+                        continue
                     f.write(f"file '{frame_path}'\n")
                     f.write(f"duration {1.0/fps}\n")
                 # Duplicate last frame
@@ -145,8 +155,7 @@ class TimelapseService:
                 str(temp_segment)
             ]
             
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            Path(list_file).unlink()
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
             
             if result.returncode != 0:
                 logger.error(f"Failed to compile segment: {result.stderr}")
@@ -162,7 +171,7 @@ class TimelapseService:
                 logger.info(f"Created daily video: {self.current_video_path.name}")
             
             # Clean up temp segment if it still exists
-            if temp_segment.exists():
+            if temp_segment and temp_segment.exists():
                 temp_segment.unlink()
             
             # Delete processed frames
@@ -175,8 +184,17 @@ class TimelapseService:
             logger.info(f"Compiled {len(self.frame_buffer)} frames into video segment")
             self.frame_buffer = []
             
+        except subprocess.TimeoutExpired:
+            logger.error("FFmpeg compilation timed out")
         except Exception as e:
-            logger.error(f"Error compiling buffer: {e}")
+            logger.error(f"Error compiling buffer: {e}", exc_info=True)
+        finally:
+            # Clean up list file
+            if list_file and Path(list_file).exists():
+                try:
+                    Path(list_file).unlink()
+                except Exception as e:
+                    logger.warning(f"Failed to delete list file: {e}")
     
     async def _append_to_video(self, segment_path: Path):
         """Append video segment to daily video"""

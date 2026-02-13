@@ -7,8 +7,11 @@ import cv2
 import numpy as np
 from pathlib import Path
 import asyncio
+import logging
 from datetime import datetime
 from typing import Dict, Any
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -41,18 +44,32 @@ async def video_stream(request: Request):
     
     async def generate():
         from app.config import settings
-        while True:
-            frame = camera.get_frame()
-            if frame is not None:
-                # Encode frame as JPEG
-                encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), settings.advanced.jpeg_quality_live]
-                _, buffer = cv2.imencode('.jpg', frame, encode_param)
-                frame_bytes = buffer.tobytes()
+        try:
+            while True:
+                # Check if client disconnected
+                if await request.is_disconnected():
+                    break
+                    
+                frame = camera.get_frame()
+                if frame is not None:
+                    try:
+                        # Encode frame as JPEG
+                        encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), settings.advanced.jpeg_quality_live]
+                        _, buffer = cv2.imencode('.jpg', frame, encode_param)
+                        frame_bytes = buffer.tobytes()
+                        
+                        yield (b'--frame\r\n'
+                               b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+                    except Exception as e:
+                        logger.error(f"Error encoding frame: {e}")
+                        await asyncio.sleep(0.1)
+                        continue
                 
-                yield (b'--frame\r\n'
-                       b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
-            
-            await asyncio.sleep(0.033)  # ~30 FPS
+                await asyncio.sleep(0.033)  # ~30 FPS
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"Stream error: {e}", exc_info=True)
     
     return StreamingResponse(
         generate(),

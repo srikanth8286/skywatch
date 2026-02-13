@@ -42,10 +42,14 @@ class CameraManager:
         
     async def _capture_loop(self):
         """Main capture loop running in background"""
+        consecutive_failures = 0
+        max_failures = 10
+        
         while self.is_running:
             try:
                 if not self.cap or not self.cap.isOpened():
                     await self._connect()
+                    consecutive_failures = 0
                 
                 if self.cap and self.cap.isOpened():
                     ret, frame = self.cap.read()
@@ -55,33 +59,47 @@ class CameraManager:
                             self.current_frame = frame.copy()
                             self.frame_count += 1
                             self.last_frame_time = datetime.now()
+                        consecutive_failures = 0
                         
                         # Notify subscribers
                         for subscriber in self.subscribers:
                             try:
                                 subscriber(frame.copy())
                             except Exception as e:
-                                logger.error(f"Error in subscriber: {e}")
+                                logger.error(f"Error in subscriber: {e}", exc_info=True)
                     else:
-                        logger.warning("Failed to read frame, reconnecting...")
-                        await self._reconnect()
+                        consecutive_failures += 1
+                        if consecutive_failures >= max_failures:
+                            logger.warning(f"Failed to read frame {consecutive_failures} times, reconnecting...")
+                            await self._reconnect()
+                            consecutive_failures = 0
                 
                 await asyncio.sleep(0.01)  # ~100 FPS max
                 
             except Exception as e:
-                logger.error(f"Error in capture loop: {e}")
-                await asyncio.sleep(self.reconnect_interval)
+                logger.error(f"Error in capture loop: {e}", exc_info=True)
+                consecutive_failures += 1
+                if consecutive_failures >= max_failures:
+                    await asyncio.sleep(self.reconnect_interval)
+                    consecutive_failures = 0
+                else:
+                    await asyncio.sleep(0.1)
                 
     async def _connect(self):
         """Connect to RTSP stream"""
-        logger.info(f"Connecting to camera: {self.rtsp_url}")
-        self.cap = cv2.VideoCapture(self.rtsp_url)
-        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Minimize latency
-        
-        if self.cap.isOpened():
-            logger.info("Camera connected successfully")
-        else:
-            logger.error("Failed to connect to camera")
+        try:
+            logger.info(f"Connecting to camera: {self.rtsp_url}")
+            self.cap = cv2.VideoCapture(self.rtsp_url)
+            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Minimize latency
+            
+            if self.cap.isOpened():
+                logger.info("Camera connected successfully")
+            else:
+                logger.error("Failed to connect to camera")
+                self.cap = None
+        except Exception as e:
+            logger.error(f"Exception during camera connection: {e}", exc_info=True)
+            self.cap = None
             
     async def _reconnect(self):
         """Reconnect to camera"""
