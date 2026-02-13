@@ -1,5 +1,5 @@
 camera:
-  rtsp_url: rtsp://admin:****@192.168.1.205:10554/tcp/av0_0
+  rtsp_url: rtsp://admin:osprey%401234@192.168.1.205:10554/tcp/av0_0
   reconnect_interval: 5
   frame_width: 1920
   frame_height: 1080

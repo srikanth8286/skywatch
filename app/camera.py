@@ -49,6 +49,10 @@ class CameraManager:
             try:
                 if not self.cap or not self.cap.isOpened():
                     await self._connect()
+                    if not self.cap or not self.cap.isOpened():
+                        # Connection failed, wait before retry
+                        await asyncio.sleep(self.reconnect_interval)
+                        continue
                     consecutive_failures = 0
                 
                 if self.cap and self.cap.isOpened():
