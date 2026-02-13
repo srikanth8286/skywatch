@@ -43,10 +43,18 @@ header h1 {
     background: #f5f5f5;
     border-bottom: 2px solid #ddd;
     overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none; /* Firefox */
+    -ms-overflow-style: none; /* IE/Edge */
+}
+
+.tabs::-webkit-scrollbar {
+    display: none; /* Chrome/Safari */
 }
 
 .tab {
-    flex: 1;
+    flex: 1 0 auto;
     min-width: 120px;
     padding: 15px 20px;
     background: none;
@@ -56,6 +64,8 @@ header h1 {
     font-weight: 500;
     color: #666;
     transition: all 0.3s;
+    white-space: nowrap;
+    text-align: center;
 }
 
 .tab:hover {
