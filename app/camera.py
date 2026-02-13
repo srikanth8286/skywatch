@@ -99,9 +99,8 @@ class CameraManager:
             try:
                 # Create VideoCapture with specific options
                 def create_capture():
-                    cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
+                    cap = cv2.VideoCapture(self.rtsp_url)
                     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-                    cap.set(cv2.CAP_PROP_FPS, 30)
                     return cap
                 
                 self.cap = await asyncio.wait_for(
