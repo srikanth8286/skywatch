@@ -110,8 +110,13 @@ document.getElementById('snapshot-btn').addEventListener('click', async () => {
 // Timelapse functionality
 async function loadTimelapseData() {
     try {
-        const response = await fetch('/api/timelapse/dates');
-        const data = await response.json();
+        // Use preloaded data if available
+        let data = window.timelapseData;
+        
+        if (!data) {
+            const response = await fetch('/api/timelapse/dates');
+            data = await response.json();
+        }
         
         const select = document.getElementById('timelapse-date');
         select.innerHTML = data.dates.length > 0
