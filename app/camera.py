@@ -80,34 +80,7 @@ class CameraManager:
                             await self._reconnect()
                             consecutive_failures = 0
                 
-                await asyncio.sleep(0.01)  # ~100 FPS max
-                
-            except Exception as e:
-                logger.error(f"Error in capture loop: {e}", exc_info=True)
-                consecutive_failures += 1
-                if consecutive_failures >= max_failures:
-                    await asyncio.sleep(self.reconnect_interval)
-                    consecutive_failures = 0
-                else:
-                    await asyncio.sleep(0.1)
-                
-    async def _connect(self):
-        """Connect to RTSP stream with timeout"""
-        try:
-            logger.info(f"Connecting to camera: {self.rtsp_url}")
-            
-            # Run in thread pool to avoid blocking
-            loop = asyncio.get_event_loop()
-            try:
-                # Create VideoCapture with specific options
-                def create_capture():
-                    # Try with GStreamer pipeline first (better for RTSP)
-                    gst_pipeline = (
-                        f"rtspsrc location={self.rtsp_url} latency=0 ! "
-                        "rtph264depay ! h264parse ! avdec_h264 ! "
-                        "videoconvert ! appsink"
-                    )
-                    cap = cv2.VideoCapture(gst_pipeline, cv2.CAP_GSTREAMER)
+                await asyncio.sleep(0.033)  # ~30 FPS - reduced CPU usage
                     
                     # If GStreamer fails, fall back to default
                     if not cap.isOpened():
