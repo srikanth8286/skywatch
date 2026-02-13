@@ -99,8 +99,21 @@ class CameraManager:
             try:
                 # Create VideoCapture with specific options
                 def create_capture():
-                    cap = cv2.VideoCapture(self.rtsp_url)
-                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                    # Try with GStreamer pipeline first (better for RTSP)
+                    gst_pipeline = (
+                        f"rtspsrc location={self.rtsp_url} latency=0 ! "
+                        "rtph264depay ! h264parse ! avdec_h264 ! "
+                        "videoconvert ! appsink"
+                    )
+                    cap = cv2.VideoCapture(gst_pipeline, cv2.CAP_GSTREAMER)
+                    
+                    # If GStreamer fails, fall back to default
+                    if not cap.isOpened():
+                        logger.info("GStreamer failed, trying default backend...")
+                        cap = cv2.VideoCapture(self.rtsp_url)
+                    
+                    if cap.isOpened():
+                        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
                     return cap
                 
                 self.cap = await asyncio.wait_for(
