@@ -341,8 +341,9 @@ async def get_settings():
 
 @router.put("/settings")
 async def update_settings(settings: Dict[str, Any], request: Request):
-    """Update settings and apply camera changes immediately"""
+    """Update settings and apply changes immediately without restart"""
     from app.settings import save_settings, validate_settings
+    from app.config import reload_config
     
     # Check if password was corrupted (contains ****)
     if 'camera' in settings and 'rtsp_url' in settings['camera']:
@@ -354,20 +355,28 @@ async def update_settings(settings: Dict[str, Any], request: Request):
     if not valid:
         raise HTTPException(status_code=400, detail=f"Invalid settings: {message}")
     
-    # Save settings
+    # Save settings to file
     success = save_settings(settings)
     if not success:
         raise HTTPException(status_code=500, detail="Failed to save settings")
+    
+    # Reload global settings object
+    new_settings = reload_config()
     
     # Apply camera URL changes immediately
     if 'camera' in settings and 'rtsp_url' in settings['camera']:
         camera_manager = request.app.state.camera_manager
         new_url = settings['camera']['rtsp_url']
         await camera_manager.update_rtsp_url(new_url)
+    
+    # Update services with new settings
+    for service in request.app.state.services:
+        if hasattr(service, 'update_settings'):
+            service.update_settings(new_settings)
         
     return {
         "success": True,
-        "message": "Settings saved. Camera reconnecting with new settings.",
+        "message": "Settings applied immediately. No restart required.",
         "restart_required": False
     }
 

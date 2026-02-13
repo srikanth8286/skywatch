@@ -99,5 +99,12 @@ def load_config(config_path: str = "config.yaml") -> Settings:
     return Settings(**config_data)
 
 
+def reload_config():
+    """Reload configuration from file and update global settings"""
+    global settings
+    settings = load_config()
+    return settings
+
+
 # Global settings instance
 settings = load_config()

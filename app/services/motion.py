@@ -46,6 +46,13 @@ class MotionDetectionService:
             except asyncio.CancelledError:
                 pass
         logger.info("Motion detection service stopped")
+    
+    def update_settings(self, new_settings):
+        """Update settings without restart"""
+        old_sensitivity = self.settings.motion.sensitivity
+        self.settings = new_settings
+        if old_sensitivity != new_settings.motion.sensitivity:
+            logger.info(f"Motion sensitivity updated: {old_sensitivity} -> {new_settings.motion.sensitivity}")
         
     async def _detection_loop(self):
         """Main detection loop"""

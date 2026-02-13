@@ -59,6 +59,13 @@ class TimelapseService:
             except asyncio.CancelledError:
                 pass
         logger.info("Timelapse service stopped")
+    
+    def update_settings(self, new_settings):
+        """Update settings without restart"""
+        old_interval = self.settings.timelapse.interval
+        self.settings = new_settings
+        if old_interval != new_settings.timelapse.interval:
+            logger.info(f"Timelapse interval updated: {old_interval}s -> {new_settings.timelapse.interval}s")
         
     async def _capture_loop(self):
         """Main capture loop"""

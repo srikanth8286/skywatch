@@ -62,6 +62,17 @@ class SolargraphService:
             except asyncio.CancelledError:
                 pass
         logger.info("Solargraph service stopped")
+    
+    def update_settings(self, new_settings):
+        """Update settings without restart"""
+        old_interval = self.settings.solargraph.detection_interval
+        self.settings = new_settings
+        if old_interval != new_settings.solargraph.detection_interval:
+            logger.info(f"Solargraph detection interval updated: {old_interval}s -> {new_settings.solargraph.detection_interval}s")
+        # Update location if coordinates changed
+        if new_settings.solargraph.latitude and new_settings.solargraph.longitude:
+            self.location = (new_settings.solargraph.latitude, new_settings.solargraph.longitude)
+            logger.info(f"Solargraph location updated to: {self.location}")
         
     async def _capture_loop(self):
         """Main capture loop"""
